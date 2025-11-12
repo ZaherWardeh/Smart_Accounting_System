@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Byte-compiled
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Environment variables
+.env
+
+# Pytest cache
+.pytest_cache/
+
+# Uvicorn reload files
+*.pid
