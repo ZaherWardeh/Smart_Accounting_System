@@ -21,7 +21,7 @@ except Exception as e:
 
 def get_financial_summary(db: Session):
     transactions = db.query(TransactionsDetail)\
-     .options(joinedload(TransactionsDetail.rsAccounts)).all()
+     .options(selectinload(TransactionsDetail.rsAccounts)).all()
     data = [
         {
             "credit": t.credit,
