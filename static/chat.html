@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ريما - المحاسبة الذكية</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --accent: #2f6f4f;
+    --accent-dark: #245a3f;
+    --user-bubble: #2f6f4f;
+    --user-text: #ffffff;
+    --bot-bubble: #eef1f0;
+    --bot-text: #1f2a24;
+    --error-bubble: #fdecea;
+    --error-text: #8a1c1c;
+    --muted: #6b7280;
+    --border: #e2e5e4;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--bot-text);
+  }
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: 720px;
+    margin: 0 auto;
+    background: var(--panel);
+    box-shadow: 0 0 24px rgba(0,0,0,0.06);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent);
+    color: white;
+  }
+  header .identity { display: flex; align-items: center; gap: 10px; }
+  header .avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; font-size: 18px;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  header p { font-size: 12px; margin: 2px 0 0; opacity: 0.85; }
+  header button {
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  header button:hover { background: rgba(255,255,255,0.28); }
+
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .bubble {
+    max-width: 78%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 14.5px;
+  }
+  .bubble.user {
+    align-self: flex-start;
+    background: var(--user-bubble);
+    color: var(--user-text);
+    border-bottom-left-radius: 4px;
+  }
+  .bubble.assistant {
+    align-self: flex-end;
+    background: var(--bot-bubble);
+    color: var(--bot-text);
+    border-bottom-right-radius: 4px;
+  }
+  .bubble.error {
+    background: var(--error-bubble);
+    color: var(--error-text);
+  }
+  .bubble.typing { color: var(--muted); font-style: italic; }
+  .empty-state {
+    margin: auto;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 20px;
+  }
+
+  form#composer {
+    display: flex;
+    gap: 8px;
+    padding: 14px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+  #input {
+    flex: 1;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14.5px;
+    font-family: inherit;
+    max-height: 120px;
+  }
+  #input:focus { outline: 2px solid var(--accent); }
+  #send {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 0 20px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #send:hover { background: var(--accent-dark); }
+  #send:disabled { opacity: 0.5; cursor: default; }
+
+  #convId {
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    padding: 4px 0 0;
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="identity">
+        <div class="avatar">ر</div>
+        <div>
+          <h1>ريما — Rima</h1>
+          <p>مساعدتك المحاسبية الذكية · Your smart accounting assistant</p>
+        </div>
+      </div>
+      <button id="newChat" type="button">محادثة جديدة</button>
+    </header>
+
+    <div id="messages">
+      <div class="empty-state" id="emptyState">
+        اسألي ريما عن دليل الحسابات، حركة أي حساب، أو رصيده...<br>
+        Ask Rima about the chart of accounts, an account's activity, or its balance...
+      </div>
+    </div>
+
+    <form id="composer">
+      <textarea id="input" rows="1" placeholder="اكتب سؤالك هون..." dir="auto"></textarea>
+      <button id="send" type="submit">إرسال</button>
+    </form>
+    <div id="convId"></div>
+  </div>
+
+<script>
+  const API_URL = "/reports/ask_ai";
+  const STORAGE_KEY = "rima_conversation_id";
+
+  function getConversationId() {
+    let id = localStorage.getItem(STORAGE_KEY);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(STORAGE_KEY, id);
+    }
+    return id;
+  }
+
+  function renderConvId() {
+    document.getElementById("convId").textContent = "conversation_id: " + getConversationId();
+  }
+
+  function newConversation() {
+    localStorage.removeItem(STORAGE_KEY);
+    document.getElementById("messages").innerHTML = '<div class="empty-state" id="emptyState">' +
+      'اسألي ريما عن دليل الحسابات، حركة أي حساب، أو رصيده...<br>' +
+      "Ask Rima about the chart of accounts, an account's activity, or its balance..." +
+      '</div>';
+    getConversationId();
+    renderConvId();
+  }
+
+  function appendMessage(role, text) {
+    const messages = document.getElementById("messages");
+    const emptyState = document.getElementById("emptyState");
+    if (emptyState) emptyState.remove();
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble " + role;
+    bubble.dir = "auto";
+    bubble.textContent = text;
+    messages.appendChild(bubble);
+    messages.scrollTop = messages.scrollHeight;
+    return bubble;
+  }
+
+  async function sendMessage(event) {
+    event.preventDefault();
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const question = input.value.trim();
+    if (!question) return;
+
+    input.value = "";
+    input.style.height = "auto";
+    appendMessage("user", question);
+    const pending = appendMessage("assistant typing", "ريما عم تفكر...");
+    sendBtn.disabled = true;
+
+    try {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: getConversationId(), question: question })
+      });
+
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try {
+          const errJson = await res.json();
+          if (errJson.detail) msg = errJson.detail;
+        } catch (_) {}
+        pending.textContent = "⚠️ " + msg;
+        pending.className = "bubble assistant error";
+        return;
+      }
+
+      const data = await res.json();
+      pending.textContent = data.answer;
+      pending.className = "bubble assistant";
+    } catch (err) {
+      pending.textContent = "⚠️ تعذر الاتصال بالخادم. تأكد إنو السيرفر شغال.";
+      pending.className = "bubble assistant error";
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  document.getElementById("composer").addEventListener("submit", sendMessage);
+  document.getElementById("newChat").addEventListener("click", newConversation);
+
+  const inputEl = document.getElementById("input");
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("composer").requestSubmit();
+    }
+  });
+  inputEl.addEventListener("input", () => {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
+  });
+
+  renderConvId();
+  inputEl.focus();
+</script>
+</body>
+</html>
