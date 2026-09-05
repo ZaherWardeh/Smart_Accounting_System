@@ -1,4 +1,5 @@
-from tools import get_account_balance, get_account_transactions, get_chart_of_accounts
+from models import TransactionsDetail
+from tools import _parse_date, get_account_balance, get_account_transactions, get_chart_of_accounts
 
 
 def test_chart_of_accounts_master_vs_book(seeded_db):
@@ -53,7 +54,9 @@ def test_balance_sheet_master_account_rolls_up_and_respects_as_of_date(seeded_db
     assert result["credit_sum"] == 0
     breakdown = result["breakdown"][0]
     assert breakdown["account_type"] == "master"
-    assert {a["id"] for a in breakdown["resolved_book_accounts"]} == {2, 3}
+    # includes the master's own id defensively, in case something was ever
+    # posted directly to it, plus its descendant book accounts.
+    assert {a["id"] for a in breakdown["resolved_book_accounts"]} == {1, 2, 3}
 
 
 def test_balance_sheet_default_as_of_is_cumulative_to_now(seeded_db):
@@ -92,3 +95,31 @@ def test_balance_unknown_account_reports_error_in_breakdown(seeded_db):
     result = get_account_balance(seeded_db, acc_ids=[999])
 
     assert result["breakdown"][0]["error"] == "Account not found"
+
+
+def test_postings_made_directly_on_a_master_account_are_not_dropped(seeded_db):
+    # nothing should post directly to a header account in practice, but
+    # nothing in the schema prevents it either - it must still be counted.
+    seeded_db.add(
+        TransactionsDetail(idMaster=1, acc_id=1, debit=999, credit=0, description="posted straight to Assets")
+    )
+    seeded_db.commit()
+
+    result = get_account_balance(seeded_db, acc_ids=[1], as_of_date="2026-12-31")
+    assert result["debit_sum"] == 1000 + 500 + 999
+    assert result["credit_sum"] == 200
+
+    txns = get_account_transactions(seeded_db, acc_id=1, date_from="2026-01-01", date_to="2026-12-31")
+    assert any(t["acc_id"] == 1 for t in txns)
+
+
+def test_parse_date_bare_date_is_bumped_to_end_of_day():
+    dt = _parse_date("2026-01-31", end_of_day=True)
+
+    assert (dt.hour, dt.minute, dt.second) == (23, 59, 59)
+
+
+def test_parse_date_explicit_midnight_timestamp_is_left_alone():
+    dt = _parse_date("2026-01-31T00:00:00", end_of_day=True)
+
+    assert (dt.hour, dt.minute, dt.second) == (0, 0, 0)

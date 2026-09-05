@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Depends, status, HTTPException, Body
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 from database import sessionLocal, engine, Base
 from models import Accounts, TransactionsMaster, TransactionsDetail
-from schemas import AccountCreate, AccountOut, TransactionMasterCreate, TransactionSchema, AskAIRequest
+from schemas import AccountCreate, AccountOut, TransactionMasterCreate, TransactionSchema, AskAIRequest, AskAIResponse
 from datetime import datetime
-from analysis import get_financial_summary
-from graph import run_agent
+from reports import get_financial_summary
+from graph import run_agent, is_llm_connected
 
 app = FastAPI()
 
@@ -23,6 +24,14 @@ def get_db():
 @app.get("/")
 def home():
     return {"message": "مرحباً بكل في برنامج المحاسب الذكي 🚀"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "llm_connected": is_llm_connected()}
+
+@app.get("/chat")
+def chat_page():
+    return FileResponse("static/chat.html")
 
 # حسابات
 @app.get("/accounts/")
@@ -193,6 +202,6 @@ def update_transaction(transaction: TransactionSchema = Body(...), db: Session =
 def get_summery(db : Session = Depends(get_db)):
     return get_financial_summary(db)
 
-@app.post("/reports/ask_ai")
+@app.post("/reports/ask_ai", response_model=AskAIResponse)
 def ask_ai(request: AskAIRequest = Body(...), db: Session = Depends(get_db)):
-    return run_agent(db, request.question)
+    return AskAIResponse(answer=run_agent(db, request.conversation_id, request.question))

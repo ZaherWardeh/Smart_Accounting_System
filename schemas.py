@@ -29,4 +29,8 @@ class TransactionSchema(TransactionMasterCreate):
     model_config = ConfigDict(from_attributes=True)
 
 class AskAIRequest(BaseModel):
+    conversation_id: str
     question: str
+
+class AskAIResponse(BaseModel):
+    answer: str

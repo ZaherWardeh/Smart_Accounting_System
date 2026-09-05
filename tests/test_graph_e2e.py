@@ -1,62 +1,78 @@
-import json
-
 import graph
-from fakes import FakeFunctionCall, FakePart, FakeResponse, install_fake_client
+from fakes import FakePart, FakeResponse, install_fake_client
 
 
-def test_full_graph_routes_data_question_through_tool_calls(monkeypatch, seeded_db):
-    """classify_intent -> route -> agent_loop, with two scripted tool-call
-    rounds before the model settles on a final answer."""
-    calls = []
+def test_full_graph_answers_via_run_agent(monkeypatch, seeded_db):
+    graph.clear_conversation("conv-run-agent")
 
     def fake_generate_content(model, contents, config=None):
-        calls.append(config)
-        if len(calls) == 1:
-            return FakeResponse(
-                parts=[],
-                text=json.dumps({"intent": "Accounting Inquiry", "confidence": "high", "reason": "balance question"}),
-            )
-        if len(calls) == 2:
-            fc = FakeFunctionCall(name="get_chart_of_accounts", args={})
-            return FakeResponse(parts=[FakePart(function_call=fc)])
-        if len(calls) == 3:
-            fc = FakeFunctionCall(name="get_account_balance", args={"acc_ids": [2]})
-            return FakeResponse(parts=[FakePart(function_call=fc)])
-        return FakeResponse(parts=[FakePart()], text="رصيد الصندوق 800 مدين.")
+        return FakeResponse(parts=[FakePart()], text="أهلاً وسهلاً! أنا ريما، كيف فيني ساعدك؟")
 
     install_fake_client(monkeypatch, fake_generate_content)
 
-    answer = graph.run_agent(seeded_db, "شو رصيد الصندوق؟")
+    answer = graph.run_agent(seeded_db, "conv-run-agent", "مرحبا")
 
-    assert answer == "رصيد الصندوق 800 مدين."
-    assert len(calls) == 4
-    # classify_intent never binds tools; agent_loop always does
-    assert calls[0] is None
-    assert all(c is not None for c in calls[1:])
+    assert answer == "أهلاً وسهلاً! أنا ريما، كيف فيني ساعدك؟"
+
+    graph.clear_conversation("conv-run-agent")
 
 
-def test_full_graph_routes_greeting_without_touching_tools(monkeypatch, seeded_db):
+def test_out_of_scope_question_is_declined_without_tools_being_needed(monkeypatch, seeded_db):
+    graph.clear_conversation("conv-scope")
+
     def fake_generate_content(model, contents, config=None):
-        assert config is None, "greeting path should never bind tools"
-        if isinstance(contents[0], dict) and "تحليل نية" in contents[0]["parts"][0]["text"]:
-            return FakeResponse(parts=[], text=json.dumps({"intent": "Greeting", "confidence": "high", "reason": "greeting"}))
-        return FakeResponse(parts=[], text="أهلاً وسهلاً!")
+        # the model itself decides not to call any tool for an out-of-scope
+        # request; the system prompt still has tools available, it just
+        # doesn't use them.
+        return FakeResponse(parts=[FakePart()], text="عذراً، أنا مختصة فقط بالأسئلة المحاسبية.")
 
     install_fake_client(monkeypatch, fake_generate_content)
 
-    answer = graph.run_agent(seeded_db, "مرحبا")
+    answer = graph.run_agent(seeded_db, "conv-scope", "شو الجو اليوم؟")
 
-    assert answer == "أهلاً وسهلاً!"
+    assert "مختصة" in answer
+
+    graph.clear_conversation("conv-scope")
 
 
-def test_full_graph_routes_low_confidence_to_ambiguous(monkeypatch, seeded_db):
+def test_memory_persists_across_two_calls_in_same_conversation(monkeypatch, seeded_db):
+    graph.clear_conversation("conv-memory")
+    seen_contents_lengths = []
+
     def fake_generate_content(model, contents, config=None):
-        if isinstance(contents[0], dict) and "تحليل نية" in contents[0]["parts"][0]["text"]:
-            return FakeResponse(parts=[], text=json.dumps({"intent": "Data Request", "confidence": "low", "reason": "unclear"}))
-        return FakeResponse(parts=[], text="ممكن تعيد صياغة السؤال؟")
+        seen_contents_lengths.append(len(contents))
+        return FakeResponse(parts=[FakePart()], text=f"رد رقم {len(seen_contents_lengths)}")
 
     install_fake_client(monkeypatch, fake_generate_content)
 
-    answer = graph.run_agent(seeded_db, "بدي شي")
+    first = graph.run_agent(seeded_db, "conv-memory", "شو رصيد الصندوق؟")
+    second = graph.run_agent(seeded_db, "conv-memory", "وشو رصيد الزبائن؟")
 
-    assert answer == "ممكن تعيد صياغة السؤال؟"
+    assert first == "رد رقم 1"
+    assert second == "رد رقم 2"
+    # the second call carried the first turn's exchange forward as history
+    assert seen_contents_lengths[1] > seen_contents_lengths[0]
+
+    graph.clear_conversation("conv-memory")
+
+
+def test_different_conversation_ids_do_not_share_memory(monkeypatch, seeded_db):
+    graph.clear_conversation("conv-a")
+    graph.clear_conversation("conv-b")
+    seen_contents_lengths = []
+
+    def fake_generate_content(model, contents, config=None):
+        seen_contents_lengths.append(len(contents))
+        return FakeResponse(parts=[FakePart()], text="رد")
+
+    install_fake_client(monkeypatch, fake_generate_content)
+
+    graph.run_agent(seeded_db, "conv-a", "سؤال أول بمحادثة أ")
+    graph.run_agent(seeded_db, "conv-b", "سؤال أول بمحادثة ب")
+
+    # both are first turns in their own conversation, so both start from
+    # a single-item contents list rather than the second inheriting the first's history.
+    assert seen_contents_lengths[0] == seen_contents_lengths[1] == 1
+
+    graph.clear_conversation("conv-a")
+    graph.clear_conversation("conv-b")

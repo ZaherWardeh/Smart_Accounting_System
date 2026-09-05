@@ -18,20 +18,25 @@ DateLike = Union[str, date_cls, datetime, None]
 
 
 def _parse_date(value: DateLike, end_of_day: bool = False) -> Optional[datetime]:
-    """Parses a date-ish value into a datetime. Bare dates (no time component)
-    used as an upper bound get pushed to the end of that day so same-day
-    transactions aren't excluded."""
+    """Parses a date-ish value into a datetime. Bare dates (no time component
+    in the source value) used as an upper bound get pushed to the end of
+    that day so same-day transactions aren't excluded. An explicit timestamp
+    that happens to land on midnight is left alone — the caller said exactly
+    what they meant, unlike a bare "YYYY-MM-DD" which has no time to give."""
     if value is None:
         return None
     if isinstance(value, datetime):
         return value
     if isinstance(value, date_cls):
         dt = datetime(value.year, value.month, value.day)
+        is_bare_date = True
     elif isinstance(value, str):
         dt = None
+        is_bare_date = False
         for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
             try:
                 dt = datetime.strptime(value, fmt)
+                is_bare_date = fmt == "%Y-%m-%d"
                 break
             except ValueError:
                 continue
@@ -40,7 +45,7 @@ def _parse_date(value: DateLike, end_of_day: bool = False) -> Optional[datetime]
     else:
         raise TypeError(f"Unsupported date type: {type(value)!r}")
 
-    if end_of_day and dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+    if end_of_day and is_bare_date:
         dt = dt.replace(hour=23, minute=59, second=59)
     return dt
 
@@ -64,20 +69,18 @@ def _is_master(acc_id: int, children_map: dict) -> bool:
 
 
 def _descendant_book_ids(acc_id: int, accounts_by_id: dict, children_map: dict) -> list[int]:
-    """Resolves an account id to the list of leaf ("book") account ids
-    underneath it. A book account resolves to itself. A master account
-    resolves to every book account recursively underneath it — nothing
-    should ever post directly to a header account, so the master's own id
-    is never included."""
+    """Resolves an account id to itself plus every book account recursively
+    underneath it. A book account resolves to just itself. A master account
+    resolves to its own id plus all its descendants' book ids — nothing
+    should ever post directly to a header account in practice, but the id
+    is still included defensively so a stray posting on the header itself
+    isn't silently dropped from balances/transactions."""
     if acc_id not in accounts_by_id:
         return []
-    children = children_map.get(acc_id)
-    if not children:
-        return [acc_id]
-    book_ids: list[int] = []
-    for child_id in children:
-        book_ids.extend(_descendant_book_ids(child_id, accounts_by_id, children_map))
-    return book_ids
+    ids = [acc_id]
+    for child_id in children_map.get(acc_id, []):
+        ids.extend(_descendant_book_ids(child_id, accounts_by_id, children_map))
+    return ids
 
 
 def get_chart_of_accounts(db: Session) -> list[dict]:

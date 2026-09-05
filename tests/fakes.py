@@ -33,5 +33,5 @@ class FakeResponse:
 
 def install_fake_client(monkeypatch, generate_content_fn):
     fake_client = types.SimpleNamespace(models=types.SimpleNamespace(generate_content=generate_content_fn))
-    monkeypatch.setattr("graph.analysis.client", fake_client)
+    monkeypatch.setattr("graph.client", fake_client)
     return fake_client
