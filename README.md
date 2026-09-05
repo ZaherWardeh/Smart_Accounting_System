@@ -52,14 +52,21 @@ tray menu stops the server.
 pip install -r requirements-tray.txt   # pystray + Pillow, only needed for this launcher
 ```
 
-Then double-click `tray.pyw` (associated with `pythonw.exe`, so no console
-window opens), or run it explicitly with the venv's interpreter:
+Install that into whichever Python runs `tray.pyw` (double-clicking uses
+whatever your system associates `.pyw` files with — it doesn't have to be
+this project's `.venv`). The server subprocess itself always uses this
+project's `.venv` interpreter regardless, auto-detected from `tray.pyw`'s
+own location, so it has the real app dependencies even if the interpreter
+running the tray icon doesn't.
+
+Double-click `tray.pyw` (no console window opens), or run it explicitly:
 
 ```bash
 .venv\Scripts\pythonw.exe tray.pyw
 ```
 
-Server output goes to `server.log` in the project root.
+Server output goes to `server.log` in the project root — check it first if
+the tray icon turns red on startup.
 
 Want to put this on AWS for testing? See `DEPLOYMENT.md`.
 

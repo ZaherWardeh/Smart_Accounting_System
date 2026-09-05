@@ -14,9 +14,13 @@ Double-click this file (associated with pythonw.exe -> no console window) to:
 15s so the icon stays accurate (e.g. after fixing an API key in .env and
 restarting, or if the server crashes).
 
-Run with the interpreter that has the project's dependencies installed,
-plus pystray + Pillow (see requirements-tray.txt):
-    "<python_dir>\\pythonw.exe" tray.pyw
+The server subprocess always runs with THIS project's .venv interpreter
+(auto-detected below), regardless of which Python launches this script -
+so it works even if double-clicking .pyw files on this machine opens a
+different Python (e.g. a system-wide install without the project's
+dependencies). The interpreter that runs tray.pyw itself only needs
+pystray + Pillow installed (see requirements-tray.txt); the venv needs
+everything in requirements.txt.
 """
 import json
 import subprocess
@@ -36,6 +40,13 @@ HOST = "127.0.0.1"
 PORT = 8000
 BASE_URL = f"http://{HOST}:{PORT}"
 LOG_FILE = PROJECT_ROOT / "server.log"
+
+# Always run the server with THIS project's venv interpreter, regardless of
+# which Python happens to be running tray.pyw itself (sys.executable would
+# be whatever interpreter Windows' .pyw file association points to - not
+# necessarily the venv with the project's actual dependencies installed).
+_VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+SERVER_PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 
 POLL_INTERVAL_SECONDS = 15
 STARTUP_TIMEOUT_SECONDS = 30
@@ -68,7 +79,7 @@ def start_server() -> None:
     global server_process
     log_handle = open(LOG_FILE, "a", encoding="utf-8")
     server_process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "main:app", "--host", HOST, "--port", str(PORT)],
+        [SERVER_PYTHON, "-m", "uvicorn", "main:app", "--host", HOST, "--port", str(PORT)],
         cwd=str(PROJECT_ROOT),
         stdout=log_handle,
         stderr=subprocess.STDOUT,
