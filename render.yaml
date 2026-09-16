@@ -1,0 +1,18 @@
+# Render Blueprint - lets Render provision this service straight from the
+# repo with "New +" -> "Blueprint" in the dashboard, no manual field-filling
+# beyond the API_KEY secret prompt. See DEPLOYMENT.md for the full guide.
+#
+# Render's free plan has no persistent disk, so DATABASE_URL/SQLITE_DATA_DIR
+# are deliberately left unset here - the app falls back to the baked-in
+# accounting.db and resets to it on every restart/spin-down/redeploy. Fine
+# for a demo; see fly.toml if you need the data to actually persist.
+services:
+  - name: smart-accounting-rima
+    type: web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        sync: false

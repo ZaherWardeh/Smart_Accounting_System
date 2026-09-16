@@ -5,7 +5,7 @@
 #      see the list, pick whichever is closest to you.
 # See DEPLOYMENT.md for the full step-by-step.
 
-app = "smart-accounting-rima"
+app = "smart-accountant-rima"
 primary_region = "iad"
 
 [build]

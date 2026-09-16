@@ -1,9 +1,22 @@
 # Deploying
 
 This covers containerizing the app and putting it on a real host for
-**testing/demo purposes**. **Fly.io is the recommended path** — free,
-no VPC/console setup, and it's the one covered step by step below. AWS is
-kept further down as an alternative.
+**testing/demo purposes**. Two free options are covered step by step,
+pick based on what you care about more:
+
+- **[Render](#3-render-free-no-payment-method-at-all)** — genuinely no
+  payment method required, ever, confirmed directly from Render's own
+  docs. Trade-off: free web services have no persistent disk, so the DB
+  resets to this repo's seed data every time the service redeploys,
+  restarts, or spins down from 15 minutes of inactivity. Good fit for
+  "here's a demo link," not for data you need to keep between sessions.
+- **[Fly.io](#4-flyio-free-payment-method-required-for-verification)** —
+  also free, and the DB actually persists (a real mounted volume, not
+  reset on restart), but Fly.io requires a payment method on file to
+  verify you're not a bot, even though it won't be charged within the
+  free allowance.
+
+AWS is kept further down as a third alternative.
 
 Nothing here deploys on its own — these are the files and the exact
 commands, for you to run yourself (account creation and anything
@@ -72,7 +85,35 @@ still there, because it's reading from the named volume, not the image.
 must never be baked into an image that might get pushed to a registry.
 Always pass it as a runtime environment variable, as above.
 
-## 3. Recommended: Fly.io (free)
+## 3. Render (free, no payment method at all)
+
+`render.yaml` in the repo (a Render "Blueprint") already declares the
+service — Docker build from this repo's `Dockerfile`, free plan, health
+check at `/health`. Render's own docs confirm the free plan needs no
+payment method, ever; the trade-off is no persistent disk, so treat this
+as "always resets to this repo's committed `accounting.db`," not
+somewhere to leave data you want to keep.
+
+1. **Sign up** at <https://render.com> — GitHub/GitLab/email, no card.
+2. **Push this repo to GitHub** if it isn't already there (Render deploys
+   from a connected repo, not a local upload).
+3. In the Render dashboard: **New +** → **Blueprint** → pick this repo.
+   Render reads `render.yaml` and shows you the one service it defines.
+4. When prompted for `API_KEY` (marked `sync: false` in the blueprint so
+   it's never committed), paste your Gemini key. Click **Apply** /
+   **Create**.
+5. Render builds the Docker image and deploys — watch progress in the
+   dashboard's **Logs** tab. First build takes a few minutes; free-plan
+   services also spin down after 15 minutes idle and cold-start (a several
+   -second delay) on the next request after that.
+6. Once live, Render shows your URL as `https://<service-name>.onrender.com`
+   — open `<that-url>/chat`.
+
+No CLI needed for this one — the whole flow is the Render dashboard once
+you've pushed to GitHub. To redeploy after a code change, just push to the
+connected branch; Render auto-deploys from it by default.
+
+## 4. Fly.io (free, payment method required for verification)
 
 `fly.toml` in the repo already has everything wired up — a persistent
 volume mounted at `/data`, `DATABASE_URL`/`SQLITE_DATA_DIR` pointed at it,
@@ -125,7 +166,7 @@ To redeploy after a code change, just `fly deploy` again — `/data` (and
 your chart of accounts on it) isn't touched by a redeploy, only by
 deleting the volume.
 
-## 4. Alternative: AWS App Runner
+## 5. Alternative: AWS App Runner
 
 Simplest option for a single container with a public HTTPS URL — no VPC,
 load balancer, or EC2 instance to manage yourself.
@@ -162,7 +203,7 @@ load balancer, or EC2 instance to manage yourself.
 4. App Runner gives you a public HTTPS URL once deployed — open
    `<that-url>/chat`.
 
-## 5. Alternative: a single EC2 instance
+## 6. Alternative: a single EC2 instance
 
 Worth it specifically if you want the SQLite data to survive container
 restarts (App Runner's filesystem is ephemeral; a bind-mounted file on a
@@ -187,7 +228,7 @@ real VM is not).
    instance profile + Secrets Manager/SSM Parameter Store instead, and pull
    it into the environment via the instance's startup script.
 
-## 6. What's in the repo for this
+## 7. What's in the repo for this
 
 | File | Purpose |
 | --- | --- |
@@ -196,4 +237,5 @@ real VM is not).
 | `.gitattributes` | Forces LF line endings on `*.sh` — a CRLF shebang line breaks `entrypoint.sh` inside the Linux container if this repo is checked out on Windows without it. |
 | `.dockerignore` | Keeps `.venv`, `.git`, `.env`, `tests/` out of the image. `accounting.db` is intentionally *not* excluded — it's the seed data, see section 2. |
 | `fly.toml` | Fly.io app config: the persistent volume mount, `DATABASE_URL`/`SQLITE_DATA_DIR`, and the single-instance settings. Edit the `app` name before your first deploy. |
+| `render.yaml` | Render Blueprint: Docker build, free plan, health check path, `API_KEY` marked as a secret you fill in during setup. |
 | `static/chat.html` | The Rima testing chat UI, served at `GET /chat`. |
