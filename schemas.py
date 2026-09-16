@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 
 class AccountCreate(BaseModel):
+    code: Optional[str] = None
     name: str
     closeIn: Optional[int] = 0
     parentAccount: Optional[int] = None

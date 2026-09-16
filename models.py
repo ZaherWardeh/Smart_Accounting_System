@@ -7,6 +7,7 @@ class Accounts(Base):
     __tablename__ = "Accounts"
 
     id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, nullable=True, unique=True, index=True)
     name = Column(String, nullable=False)
     closeIn = Column(
         Integer,

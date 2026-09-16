@@ -1,4 +1,4 @@
-from models import TransactionsDetail
+from models import Accounts, TransactionsDetail
 from tools import _parse_date, get_account_balance, get_account_transactions, get_chart_of_accounts
 
 
@@ -123,3 +123,34 @@ def test_parse_date_explicit_midnight_timestamp_is_left_alone():
     dt = _parse_date("2026-01-31T00:00:00", end_of_day=True)
 
     assert (dt.hour, dt.minute, dt.second) == (0, 0, 0)
+
+
+def test_chart_of_accounts_sorted_by_code_not_by_id(db_session):
+    db_session.add_all(
+        [
+            Accounts(id=1, code="200", name="B", closeIn=0, parentAccount=None),
+            Accounts(id=2, code="100", name="A", closeIn=0, parentAccount=None),
+            Accounts(id=3, code=None, name="Z uncoded", closeIn=0, parentAccount=None),
+        ]
+    )
+    db_session.commit()
+
+    result = get_chart_of_accounts(db_session)
+
+    assert [a["code"] for a in result] == ["100", "200", None]
+    assert [a["id"] for a in result] == [2, 1, 3]  # code order, not insertion/id order
+
+
+def test_balance_breakdown_sorted_by_code(db_session):
+    db_session.add_all(
+        [
+            Accounts(id=1, code="200", name="B", closeIn=0, parentAccount=None),
+            Accounts(id=2, code="100", name="A", closeIn=0, parentAccount=None),
+        ]
+    )
+    db_session.commit()
+
+    result = get_account_balance(db_session, acc_ids=[1, 2])
+
+    assert [b["code"] for b in result["breakdown"]] == ["100", "200"]
+    assert [b["acc_id"] for b in result["breakdown"]] == [2, 1]

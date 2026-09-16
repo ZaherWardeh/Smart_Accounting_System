@@ -66,6 +66,7 @@ def get_account(id: int, db: Session = Depends(get_db)):
 @app.post("/accounts/", status_code=status.HTTP_201_CREATED)
 def create_account(account: AccountCreate = Body(...), db: Session = Depends(get_db)):
     db_account = Accounts(
+        code=account.code,
         name=account.name,
         closeIn=account.closeIn,
         parentAccount=account.parentAccount
@@ -80,6 +81,7 @@ def update_account(account: AccountOut = Body(...), db: Session = Depends(get_db
     db_account = db.query(Accounts).filter(Accounts.id == account.id).first()
     if not db_account:
         raise HTTPException(status_code=404, detail="Account not found")
+    db_account.code = account.code
     db_account.name = account.name
     db_account.closeIn = account.closeIn
     db_account.parentAccount = account.parentAccount

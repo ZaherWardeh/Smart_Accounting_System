@@ -119,10 +119,12 @@
       const res = await fetch('/reports/chart-of-accounts');
       chart = await res.json();
 
-      document.getElementById('stAccount').innerHTML = chart.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+      document.getElementById('stAccount').innerHTML = chart.map(a =>
+        `<option value="${a.id}">${a.code ? a.code + ' — ' : ''}${a.name}</option>`
+      ).join('');
 
       document.getElementById('balChecklist').innerHTML = chart.map(a => `
-        <label><input type="checkbox" value="${a.id}"> ${a.name} ${a.account_type === 'master' ? '(رئيسي)' : ''}</label>
+        <label><input type="checkbox" value="${a.id}"> ${a.code ? a.code + ' — ' : ''}${a.name} ${a.account_type === 'master' ? '(رئيسي)' : ''}</label>
       `).join('');
     } catch (e) { showAlert('تعذر تحميل دليل الحسابات.'); }
   }
@@ -171,8 +173,8 @@
       if (!res.ok) { showAlert('تعذر حساب الرصيد.'); return; }
       const data = await res.json();
       const rows = data.breakdown.map(b => b.error
-        ? `<tr><td>${b.acc_id}</td><td colspan="3">${b.error}</td></tr>`
-        : `<tr><td>${b.acc_name}</td><td>${fmt(b.debit_sum)}</td><td>${fmt(b.credit_sum)}</td><td>${fmt(b.net)}</td></tr>`
+        ? `<tr><td>${b.acc_id}</td><td colspan="4">${b.error}</td></tr>`
+        : `<tr><td>${b.code || '—'}</td><td>${b.acc_name}</td><td>${fmt(b.debit_sum)}</td><td>${fmt(b.credit_sum)}</td><td>${fmt(b.net)}</td></tr>`
       ).join('');
       document.getElementById('balResult').innerHTML = `
         <div class="stat-row">
@@ -182,7 +184,7 @@
         </div>
         <div class="table-wrap" style="margin-top:12px;">
           <table>
-            <thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th><th>الصافي</th></tr></thead>
+            <thead><tr><th>الرمز</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>الصافي</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>

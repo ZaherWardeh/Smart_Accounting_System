@@ -84,13 +84,15 @@ def _descendant_book_ids(acc_id: int, accounts_by_id: dict, children_map: dict) 
 
 
 def get_chart_of_accounts(db: Session) -> list[dict]:
-    """Returns every account: id, name, closeIn (labeled), parentAccount,
+    """Returns every account: id, code, name, closeIn (labeled), parentAccount,
     and a derived account_type ("master" if any other account lists this
-    one as its parentAccount, otherwise "book")."""
+    one as its parentAccount, otherwise "book"). Sorted by code ascending
+    (accounts without a code sort last, by name)."""
     accounts_by_id, children_map = _load_accounts(db)
-    return [
+    result = [
         {
             "id": a.id,
+            "code": a.code,
             "name": a.name,
             "closeIn": CLOSE_IN_LABELS.get(a.closeIn, a.closeIn),
             "parentAccount": a.parentAccount,
@@ -98,6 +100,8 @@ def get_chart_of_accounts(db: Session) -> list[dict]:
         }
         for a in accounts_by_id.values()
     ]
+    result.sort(key=lambda a: (a["code"] is None, a["code"] or "", a["name"]))
+    return result
 
 
 def get_account_transactions(
@@ -200,6 +204,7 @@ def get_account_balance(
         breakdown.append(
             {
                 "acc_id": acc_id,
+                "code": account.code,
                 "acc_name": account.name,
                 "account_type": "master" if _is_master(acc_id, children_map) else "book",
                 "closeIn": CLOSE_IN_LABELS.get(account.closeIn, account.closeIn),
@@ -215,6 +220,8 @@ def get_account_balance(
         combined_debit += debit_sum
         combined_credit += credit_sum
 
+    breakdown.sort(key=lambda b: (b.get("code") is None, b.get("code") or "", b.get("acc_name") or ""))
+
     return {
         "debit_sum": combined_debit,
         "credit_sum": combined_credit,
@@ -229,11 +236,15 @@ TOOL_DECLARATIONS = [
     {
         "name": "get_chart_of_accounts",
         "description": (
-            "Returns every account in the chart of accounts: id, name, closeIn "
+            "Returns every account in the chart of accounts: id, code, name, closeIn "
             "(Balance Sheet / P&L / Trading), parentAccount, and account_type "
-            "(master = rollup header, book = postable leaf). Use this first to "
-            "resolve an account name (e.g. 'sales' or 'الصندوق') to an id before "
-            "calling get_account_transactions or get_account_balance."
+            "(master = rollup header, book = postable leaf) - sorted by code ascending "
+            "(an account without a code sorts last). The code is the account's short "
+            "identifier in the chart of accounts (e.g. '001'); mention it alongside the "
+            "name when answering if it's set (e.g. '001 - الموجودات'), and prefer it over "
+            "id when a code exists. Use this first to resolve an account name (e.g. "
+            "'sales' or 'الصندوق') to an id before calling get_account_transactions or "
+            "get_account_balance."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -258,8 +269,9 @@ TOOL_DECLARATIONS = [
         "name": "get_account_balance",
         "description": (
             "Returns the debit/credit/net balance for one or more accounts, plus "
-            "a per-account breakdown. Pass multiple ids to aggregate related "
-            "accounts (e.g. all cash/bank accounts for a 'liquidity' question). "
+            "a per-account breakdown sorted by account code (each entry includes its "
+            "code). Pass multiple ids to aggregate related accounts (e.g. all cash/bank "
+            "accounts for a 'liquidity' question). "
             "Balance Sheet accounts (closeIn=0) are cumulative as of as_of_date "
             "(defaults to today). P&L / Trading accounts (closeIn=1/2) require "
             "date_from/date_to since they only mean something over a period."

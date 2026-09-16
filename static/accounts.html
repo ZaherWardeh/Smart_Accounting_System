@@ -38,9 +38,15 @@
     <div class="modal">
       <h2 id="modalTitle">حساب جديد</h2>
       <form id="accountForm">
-        <div class="field">
-          <label for="name">اسم الحساب</label>
-          <input type="text" id="name" required>
+        <div class="field-row">
+          <div class="field" style="flex: 0 0 120px;">
+            <label for="code">رمز الحساب</label>
+            <input type="text" id="code" placeholder="مثال: 001">
+          </div>
+          <div class="field">
+            <label for="name">اسم الحساب</label>
+            <input type="text" id="name" required>
+          </div>
         </div>
         <div class="field-row">
           <div class="field">
@@ -93,6 +99,7 @@
       <li>
         <div class="tree-node">
           ${toggle}
+          ${a.code ? `<span class="badge">${a.code}</span>` : ''}
           <span class="tree-name">${a.name}</span>
           ${badge}
           <span class="tree-meta">${CLOSE_IN_LABELS[a.closeIn] ?? a.closeIn} · #${a.id}</span>
@@ -107,6 +114,12 @@
     }
     html += `</li>`;
     return html;
+  }
+
+  function compareByCode(a, b) {
+    if (!!a.code !== !!b.code) return a.code ? -1 : 1; // coded accounts before uncoded ones
+    if (a.code && b.code) return a.code.localeCompare(b.code, undefined, { numeric: true });
+    return a.name.localeCompare(b.name, 'ar');
   }
 
   function toggleNode(el) {
@@ -137,12 +150,12 @@
     accounts.forEach(a => {
       (childrenOf[a.parentAccount] = childrenOf[a.parentAccount] || []).push(a);
     });
-    Object.values(childrenOf).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name, 'ar')));
+    Object.values(childrenOf).forEach(list => list.sort(compareByCode));
 
     // treat an account as a root if it has no parent, or its parent no longer exists
     const roots = accounts
       .filter(a => a.parentAccount === null || !idSet.has(a.parentAccount))
-      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+      .sort(compareByCode);
 
     container.innerHTML = `<ul>${roots.map(a => renderNode(a, childrenOf)).join('')}</ul>`;
   }
@@ -153,7 +166,7 @@
     sel.innerHTML = '<option value="">— بدون —</option>' +
       accounts
         .filter(a => a.id !== editingId)
-        .map(a => `<option value="${a.id}">${a.name}</option>`)
+        .map(a => `<option value="${a.id}">${a.code ? a.code + ' — ' : ''}${a.name}</option>`)
         .join('');
     sel.value = current;
   }
@@ -175,6 +188,7 @@
   function openAdd() {
     editingId = null;
     document.getElementById('modalTitle').textContent = 'حساب جديد';
+    document.getElementById('code').value = '';
     document.getElementById('name').value = '';
     document.getElementById('closeIn').value = '0';
     populateParentSelect();
@@ -187,6 +201,7 @@
     if (!acc) return;
     editingId = id;
     document.getElementById('modalTitle').textContent = 'تعديل حساب';
+    document.getElementById('code').value = acc.code || '';
     document.getElementById('name').value = acc.name;
     document.getElementById('closeIn').value = String(acc.closeIn);
     populateParentSelect();
@@ -217,6 +232,7 @@
     e.preventDefault();
     clearAlert();
     const payload = {
+      code: document.getElementById('code').value.trim() || null,
       name: document.getElementById('name').value.trim(),
       closeIn: Number(document.getElementById('closeIn').value),
       parentAccount: document.getElementById('parentAccount').value

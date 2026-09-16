@@ -34,9 +34,9 @@ frontend project, no build step) covering the whole app:
 | Page | Route | What it does |
 | --- | --- | --- |
 | Dashboard | `/` | Financial summary + links into the other pages. |
-| Accounts | `/accounts` | Browse the chart of accounts; add, edit, delete an account. |
+| Accounts | `/accounts` | The chart of accounts as a collapsible tree, sorted by code; add, edit, delete an account. |
 | Transactions | `/transactions` | Browse journal entries; add/edit with dynamic debit/credit lines and live balance validation; delete. |
-| Reports | `/reports` | Financial summary, browsable chart of accounts, statement of account (with an optional date range), and account balance (single or multiple accounts). |
+| Reports | `/reports` | Financial summary, statement of account (with an optional date range), and account balance (single or multiple accounts). |
 | Chat with Rima | `/chat` | Ask Rima anything accounting-related; keeps `conversation_id` in `localStorage` so memory persists across reloads until you hit "محادثة جديدة" (new conversation). |
 
 All five pages are plain HTML/CSS/JS (`static/*.html` + a shared
@@ -169,11 +169,14 @@ Two things worth knowing about this:
 Tools are shaped around how an accountant actually reasons — chart, then
 ledger, then balance — rather than generic pandas filter/groupby calls:
 
-1. **`get_chart_of_accounts()`** — every account with `id`, `name`, `closeIn`
-   (labeled Balance Sheet / P&L / Trading), `parentAccount`, and a derived
-   `account_type` (`"master"` if any other account lists it as a parent,
-   otherwise `"book"`). The model calls this first to resolve a name like
-   "sales" or "الصندوق" to an id.
+1. **`get_chart_of_accounts()`** — every account with `id`, `code`, `name`,
+   `closeIn` (labeled Balance Sheet / P&L / Trading), `parentAccount`, and a
+   derived `account_type` (`"master"` if any other account lists it as a
+   parent, otherwise `"book"`) — **sorted by `code` ascending** (an account
+   without a code sorts last). `code` is the account's short identifier in
+   the chart of accounts (e.g. `"001"`); the tool's own description tells
+   the model to quote it alongside the name when it's set. The model calls
+   this first to resolve a name like "sales" or "الصندوق" to an id.
 2. **`get_account_transactions(acc_id, date_from=None, date_to=None)`** —
    transaction lines for that account (all-time if no range given). A master
    account pulls transactions from every descendant book account too.
@@ -185,11 +188,25 @@ ledger, then balance — rather than generic pandas filter/groupby calls:
    Trading accounts require a `date_from`/`date_to` period. Master accounts
    sum every descendant book account recursively. Returns a combined
    `debit_sum`/`credit_sum`/`net` plus a per-account `breakdown` — never a
-   single collapsed number — so the answer is auditable. The tool does not
-   sign the net figure into "the balance is X" (the schema has no
+   single collapsed number — so the answer is auditable. The breakdown is
+   sorted by `code` and each entry includes it. The tool does not sign the
+   net figure into "the balance is X" (the schema has no
    asset/liability/equity/revenue/expense classification); that
    interpretation is left to Rima's own accounting judgment during answer
    synthesis.
+
+### Account codes
+
+Every account has an optional `code` (e.g. `"001"`) shown next to its name
+throughout the site and sorted on wherever accounts are listed (the
+Accounts tree, the chart of accounts, statement/balance selectors, and the
+balance breakdown). `scripts/backfill_account_codes.py` is the one-off
+migration that added the column and assigned codes to this repo's dev
+`accounting.db` via a depth-first walk of the tree (Assets' whole subtree
+numbered 001-009 before moving to Liabilities, then Revenue, then
+Expenses) — kept for reference if you're migrating your own pre-existing
+database; a fresh/empty database gets the `code` column for free from
+`Base.metadata.create_all()`.
 
 ## Known limitations
 
