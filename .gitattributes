@@ -1,0 +1,4 @@
+# Shell scripts run inside Linux containers - a CRLF line ending breaks
+# the shebang/interpreter on checkout from a Windows machine with
+# core.autocrlf=true. Force LF regardless of the checking-out platform.
+*.sh text eol=lf
