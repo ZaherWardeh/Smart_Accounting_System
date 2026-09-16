@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -14,7 +15,15 @@ from models import Accounts, TransactionsDetail, TransactionsMaster
 
 @pytest.fixture()
 def db_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # StaticPool keeps a single shared connection alive for the life of the
+    # engine regardless of which thread uses it - required because FastAPI's
+    # TestClient runs sync path operations in a worker thread, and plain
+    # :memory: SQLite otherwise hands each thread its own empty database.
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
     try:

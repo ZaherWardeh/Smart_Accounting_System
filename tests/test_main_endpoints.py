@@ -1,0 +1,92 @@
+import pytest
+from fastapi.testclient import TestClient
+
+import main
+
+
+@pytest.fixture()
+def client(seeded_db):
+    def override_get_db():
+        yield seeded_db
+
+    main.app.dependency_overrides[main.get_db] = override_get_db
+    yield TestClient(main.app)
+    main.app.dependency_overrides.clear()
+
+
+def test_html_pages_serve_ok(client):
+    for path in ("/", "/accounts", "/transactions", "/reports", "/chat"):
+        res = client.get(path)
+        assert res.status_code == 200
+        assert "text/html" in res.headers["content-type"]
+
+
+def test_static_assets_serve_ok(client):
+    res = client.get("/static/app.css")
+    assert res.status_code == 200
+
+
+def test_chart_of_accounts_endpoint(client):
+    res = client.get("/reports/chart-of-accounts")
+    assert res.status_code == 200
+    data = res.json()
+    assert {a["id"] for a in data} == {1, 2, 3, 4, 5, 6, 7}
+    assert next(a for a in data if a["id"] == 1)["account_type"] == "master"
+    assert next(a for a in data if a["id"] == 2)["account_type"] == "book"
+
+
+def test_statement_endpoint(client):
+    res = client.get("/reports/statement/1", params={"date_from": "2026-02-01"})
+    assert res.status_code == 200
+    rows = res.json()
+    assert len(rows) == 2  # Bank sale + Paid expense, both after 2026-02-01
+
+
+def test_statement_endpoint_unknown_account_404(client):
+    res = client.get("/reports/statement/9999")
+    assert res.status_code == 404
+
+
+def test_balance_endpoint(client):
+    res = client.get("/reports/balance", params={"acc_ids": [2, 3]})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["debit_sum"] == 1500
+    assert data["credit_sum"] == 200
+
+
+def test_delete_account_blocked_by_children(client):
+    res = client.delete("/accounts/1")  # Assets, has children 2 and 3
+    assert res.status_code == 409
+
+
+def test_delete_account_blocked_by_transactions(client):
+    res = client.delete("/accounts/2")  # Cash, has transactions posted to it
+    assert res.status_code == 409
+
+
+def test_delete_account_succeeds_when_unused(client):
+    created = client.post("/accounts/", json={"name": "Unused", "closeIn": 0, "parentAccount": None})
+    assert created.status_code == 201
+    new_id = created.json()["id"]
+
+    deleted = client.delete(f"/accounts/{new_id}")
+    assert deleted.status_code == 204
+    assert client.get(f"/accounts/{new_id}").status_code == 404
+
+
+def test_delete_account_unknown_id_404(client):
+    assert client.delete("/accounts/9999").status_code == 404
+
+
+def test_delete_transaction_removes_it_and_its_details(client):
+    res = client.delete("/transactions/1")
+    assert res.status_code == 204
+    assert client.get("/transactions/1").status_code == 404
+    # cascade should have removed the detail rows too, not just the master
+    remaining_cash_statement = client.get("/reports/statement/2").json()
+    assert all(row["transaction_id"] != 1 for row in remaining_cash_statement)
+
+
+def test_delete_transaction_unknown_id_404(client):
+    assert client.delete("/transactions/9999").status_code == 404

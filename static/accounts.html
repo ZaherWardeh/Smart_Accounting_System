@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>الحسابات — نظام المحاسبة الذكي</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topnav">
+    <div class="brand"><span class="dot">ر</span> نظام المحاسبة الذكي</div>
+    <nav>
+      <a href="/">الرئيسية</a>
+      <a href="/accounts" class="active">الحسابات</a>
+      <a href="/transactions">القيود</a>
+      <a href="/reports">التقارير</a>
+      <a href="/chat">ريما 🤖</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <h1>دليل الحسابات</h1>
+    <p class="subtitle">استعراض، إضافة، تعديل، وحذف الحسابات.</p>
+
+    <div id="alertBox"></div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h2 style="margin:0;">كل الحسابات</h2>
+        <button class="btn btn-primary" id="addBtn" type="button">+ حساب جديد</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>المعرف</th>
+              <th>الاسم</th>
+              <th>النوع</th>
+              <th>نوع الإغلاق</th>
+              <th>الحساب الأب</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody id="accountsBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" hidden>لا يوجد حسابات بعد.</div>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-overlay" id="modalOverlay" hidden>
+    <div class="modal">
+      <h2 id="modalTitle">حساب جديد</h2>
+      <form id="accountForm">
+        <div class="field">
+          <label for="name">اسم الحساب</label>
+          <input type="text" id="name" required>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="closeIn">نوع الإغلاق</label>
+            <select id="closeIn">
+              <option value="0">ميزانية عمومية (Balance Sheet)</option>
+              <option value="1">أرباح وخسائر (P&amp;L)</option>
+              <option value="2">متاجرة (Trading)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="parentAccount">الحساب الأب</label>
+            <select id="parentAccount">
+              <option value="">— بدون —</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="cancelBtn">إلغاء</button>
+          <button type="submit" class="btn btn-primary">حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+  const CLOSE_IN_LABELS = { 0: "ميزانية عمومية", 1: "أرباح وخسائر", 2: "متاجرة" };
+
+  let accounts = [];
+  let editingId = null;
+
+  function showAlert(msg, type = 'error') {
+    document.getElementById('alertBox').innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  }
+  function clearAlert() {
+    document.getElementById('alertBox').innerHTML = '';
+  }
+
+  function accountTypeOf(id) {
+    return accounts.some(a => a.parentAccount === id) ? 'master' : 'book';
+  }
+
+  function nameOf(id) {
+    const a = accounts.find(a => a.id === id);
+    return a ? a.name : '—';
+  }
+
+  function renderTable() {
+    const body = document.getElementById('accountsBody');
+    const empty = document.getElementById('emptyState');
+    if (accounts.length === 0) {
+      body.innerHTML = '';
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    body.innerHTML = accounts.map(a => {
+      const type = accountTypeOf(a.id);
+      const badge = type === 'master'
+        ? '<span class="badge master">رئيسي</span>'
+        : '<span class="badge">فرعي</span>';
+      return `
+        <tr>
+          <td>${a.id}</td>
+          <td>${a.name}</td>
+          <td>${badge}</td>
+          <td>${CLOSE_IN_LABELS[a.closeIn] ?? a.closeIn}</td>
+          <td>${a.parentAccount ? nameOf(a.parentAccount) : '—'}</td>
+          <td class="row-actions">
+            <button class="btn btn-sm" onclick="openEdit(${a.id})">تعديل</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">حذف</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function populateParentSelect() {
+    const sel = document.getElementById('parentAccount');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— بدون —</option>' +
+      accounts
+        .filter(a => a.id !== editingId)
+        .map(a => `<option value="${a.id}">${a.name}</option>`)
+        .join('');
+    sel.value = current;
+  }
+
+  async function loadAccounts() {
+    try {
+      const res = await fetch('/accounts/');
+      accounts = await res.json();
+      renderTable();
+      populateParentSelect();
+    } catch (e) {
+      showAlert('تعذر تحميل الحسابات.');
+    }
+  }
+
+  function openModal() { document.getElementById('modalOverlay').hidden = false; }
+  function closeModal() { document.getElementById('modalOverlay').hidden = true; }
+
+  function openAdd() {
+    editingId = null;
+    document.getElementById('modalTitle').textContent = 'حساب جديد';
+    document.getElementById('name').value = '';
+    document.getElementById('closeIn').value = '0';
+    populateParentSelect();
+    document.getElementById('parentAccount').value = '';
+    openModal();
+  }
+
+  function openEdit(id) {
+    const acc = accounts.find(a => a.id === id);
+    if (!acc) return;
+    editingId = id;
+    document.getElementById('modalTitle').textContent = 'تعديل حساب';
+    document.getElementById('name').value = acc.name;
+    document.getElementById('closeIn').value = String(acc.closeIn);
+    populateParentSelect();
+    document.getElementById('parentAccount').value = acc.parentAccount ?? '';
+    openModal();
+  }
+
+  async function deleteAccount(id) {
+    if (!confirm('متأكد من حذف هذا الحساب؟')) return;
+    clearAlert();
+    try {
+      const res = await fetch(`/accounts/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.detail || `تعذر حذف الحساب (${res.status}).`);
+        return;
+      }
+      await loadAccounts();
+    } catch (e) {
+      showAlert('تعذر الاتصال بالخادم.');
+    }
+  }
+
+  document.getElementById('addBtn').addEventListener('click', openAdd);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('accountForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearAlert();
+    const payload = {
+      name: document.getElementById('name').value.trim(),
+      closeIn: Number(document.getElementById('closeIn').value),
+      parentAccount: document.getElementById('parentAccount').value
+        ? Number(document.getElementById('parentAccount').value)
+        : null,
+    };
+    if (!payload.name) return;
+
+    try {
+      let res;
+      if (editingId) {
+        res = await fetch('/accounts/', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editingId, ...payload }),
+        });
+      } else {
+        res = await fetch('/accounts/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.detail || `تعذر حفظ الحساب (${res.status}).`);
+        return;
+      }
+      closeModal();
+      await loadAccounts();
+    } catch (e) {
+      showAlert('تعذر الاتصال بالخادم.');
+    }
+  });
+
+  loadAccounts();
+</script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام المحاسبة الذكي</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topnav">
+    <div class="brand"><span class="dot">ر</span> نظام المحاسبة الذكي</div>
+    <nav>
+      <a href="/" class="active">الرئيسية</a>
+      <a href="/accounts">الحسابات</a>
+      <a href="/transactions">القيود</a>
+      <a href="/reports">التقارير</a>
+      <a href="/chat">ريما 🤖</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <h1>الرئيسية</h1>
+    <p class="subtitle">لمحة سريعة عن وضعك المالي، وروابط لكل أقسام البرنامج.</p>
+
+    <div id="alertBox"></div>
+
+    <div class="card">
+      <h2>ملخص مالي</h2>
+      <div class="stat-row" id="summaryStats">
+        <div class="stat"><div class="label">إجمالي الإيرادات</div><div class="value">...</div></div>
+        <div class="stat"><div class="label">إجمالي المصاريف</div><div class="value">...</div></div>
+        <div class="stat"><div class="label">الرصيد</div><div class="value">...</div></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <a class="card" style="text-decoration:none; color:inherit;" href="/accounts">
+        <h2>📒 الحسابات</h2>
+        <p class="subtitle" style="margin:0;">استعراض دليل الحسابات، إضافة حساب جديد، تعديل أو حذف حساب.</p>
+      </a>
+      <a class="card" style="text-decoration:none; color:inherit;" href="/transactions">
+        <h2>🧾 القيود المحاسبية</h2>
+        <p class="subtitle" style="margin:0;">استعراض القيود، إضافة قيد جديد متوازن، تعديل أو حذف قيد.</p>
+      </a>
+      <a class="card" style="text-decoration:none; color:inherit;" href="/reports">
+        <h2>📊 التقارير</h2>
+        <p class="subtitle" style="margin:0;">دليل الحسابات، كشف حساب، وأرصدة الحسابات.</p>
+      </a>
+      <a class="card" style="text-decoration:none; color:inherit;" href="/chat">
+        <h2>🤖 ريما — المحاسبة الذكية</h2>
+        <p class="subtitle" style="margin:0;">اسأل ريما عن أي شيء محاسبي وهي رح تجاوبك بالاعتماد على بياناتك.</p>
+      </a>
+    </div>
+  </main>
+
+<script>
+  function fmt(n) {
+    const num = Number(n) || 0;
+    return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  }
+
+  function showError(msg) {
+    document.getElementById('alertBox').innerHTML = `<div class="alert alert-error">${msg}</div>`;
+  }
+
+  async function loadSummary() {
+    try {
+      const res = await fetch('/reports/summery');
+      const data = await res.json();
+      const el = document.getElementById('summaryStats');
+      if (data.Message) {
+        el.innerHTML = `<div class="empty-state">${data.Message}</div>`;
+        return;
+      }
+      el.innerHTML = `
+        <div class="stat"><div class="label">إجمالي الإيرادات</div><div class="value">${fmt(data['Total Income'])}</div></div>
+        <div class="stat"><div class="label">إجمالي المصاريف</div><div class="value">${fmt(data['Total Expense'])}</div></div>
+        <div class="stat"><div class="label">الرصيد</div><div class="value">${fmt(data['Balance'])}</div></div>
+      `;
+    } catch (e) {
+      showError('تعذر تحميل الملخص المالي.');
+    }
+  }
+
+  loadSummary();
+</script>
+</body>
+</html>

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ريما - المحاسبة الذكية</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   :root {
     --bg: #f4f6f8;
@@ -27,16 +28,19 @@
     background: var(--bg);
     color: var(--bot-text);
   }
+  body { display: flex; flex-direction: column; }
   .app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    flex: 1;
+    min-height: 0;
     max-width: 720px;
+    width: 100%;
     margin: 0 auto;
     background: var(--panel);
     box-shadow: 0 0 24px rgba(0,0,0,0.06);
   }
-  header {
+  .app > header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -146,6 +150,16 @@
 </style>
 </head>
 <body>
+  <header class="topnav">
+    <div class="brand"><span class="dot">ر</span> نظام المحاسبة الذكي</div>
+    <nav>
+      <a href="/">الرئيسية</a>
+      <a href="/accounts">الحسابات</a>
+      <a href="/transactions">القيود</a>
+      <a href="/reports">التقارير</a>
+      <a href="/chat" class="active">ريما 🤖</a>
+    </nav>
+  </header>
   <div class="app">
     <header>
       <div class="identity">

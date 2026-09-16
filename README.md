@@ -1,7 +1,8 @@
 # Smart Accounting System
 
-A small FastAPI accounting service with an AI assistant ("ريما" / "Rima") that
-answers accounting questions against the app's own data, powered by
+A small FastAPI accounting web app — accounts, transactions, and reports —
+plus an AI assistant ("ريما" / "Rima") that answers accounting questions
+against the app's own data, powered by
 [LangGraph](https://langchain-ai.github.io/langgraph/) and Gemini
 (`gemini-2.5-flash` via `google-genai`).
 
@@ -27,12 +28,21 @@ Run the API:
 uvicorn main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/chat` for a small built-in chat UI to talk to
-Rima directly (no separate frontend project needed) — good for manual
-testing. It's a single static page (`static/chat.html`) served by FastAPI;
-it keeps its own `conversation_id` in the browser's `localStorage`, so
-memory persists across page reloads until you hit "محادثة جديدة" (new
-conversation).
+Open `http://127.0.0.1:8000/` — a small built-in website (no separate
+frontend project, no build step) covering the whole app:
+
+| Page | Route | What it does |
+| --- | --- | --- |
+| Dashboard | `/` | Financial summary + links into the other pages. |
+| Accounts | `/accounts` | Browse the chart of accounts; add, edit, delete an account. |
+| Transactions | `/transactions` | Browse journal entries; add/edit with dynamic debit/credit lines and live balance validation; delete. |
+| Reports | `/reports` | Financial summary, browsable chart of accounts, statement of account (with an optional date range), and account balance (single or multiple accounts). |
+| Chat with Rima | `/chat` | Ask Rima anything accounting-related; keeps `conversation_id` in `localStorage` so memory persists across reloads until you hit "محادثة جديدة" (new conversation). |
+
+All five pages are plain HTML/CSS/JS (`static/*.html` + a shared
+`static/app.css`), talking to the JSON API below via `fetch`. Deleting an
+account is blocked (409) if it has child accounts or any transactions
+posted to it, so the chart of accounts can't be silently orphaned.
 
 Run the tests:
 
@@ -72,7 +82,27 @@ Want to put this on AWS for testing? See `DEPLOYMENT.md`.
 
 ## Architecture
 
-### Request flow
+### JSON API
+
+The pages above are all thin `fetch` clients over this API — use it
+directly too if you want (Swagger UI at `/docs`).
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /accounts/`, `GET /accounts/{id}` | List / fetch accounts. |
+| `POST /accounts/`, `PUT /accounts/` | Create / update an account (`id` in the body for update). |
+| `DELETE /accounts/{id}` | Delete an account — `409` if it has child accounts or transactions posted to it. |
+| `GET /transactions/`, `GET /transactions/{id}` | List / fetch journal entries with their line items. |
+| `POST /transactions/`, `PUT /transactions/` | Create / update a transaction — `406` if debits ≠ credits. |
+| `DELETE /transactions/{id}` | Delete a transaction (its line items cascade with it). |
+| `GET /reports/summery` | Total income / expense / balance. |
+| `GET /reports/chart-of-accounts` | Every account with a derived `account_type` (`master`/`book`) and labeled `closeIn`. |
+| `GET /reports/statement/{acc_id}?date_from=&date_to=` | Statement of account — a master account rolls up its descendants. |
+| `GET /reports/balance?acc_ids=1&acc_ids=2&as_of_date=&date_from=&date_to=` | Balance for one or more accounts, combined + per-account breakdown. |
+| `POST /reports/ask_ai` | Ask Rima — see below. |
+| `GET /health` | `{"status": "ok", "llm_connected": bool}` — used by the tray launcher. |
+
+### Request flow (Rima)
 
 ```
 POST /reports/ask_ai  { "conversation_id": "...", "question": "..." }
@@ -130,7 +160,7 @@ Two things worth knowing about this:
 | `graph.py` | The Gemini client setup, `AgentState`, the single `agent_loop` node and its tool-calling loop, the conversation-history store. `run_agent(db, conversation_id, question)` is the entry point `main.py` calls. |
 | `reports.py` | `get_financial_summary`, used by `/reports/summery` — the only other place in the app that touches transaction data outside the AI path. |
 | `models.py` / `schemas.py` / `database.py` | SQLAlchemy models, Pydantic schemas, SQLite session setup — unchanged in shape by this migration except the Pydantic v2 fixes below. |
-| `static/chat.html` | The built-in Rima testing chat UI, served at `GET /chat`. |
+| `static/*.html` / `static/app.css` | The built-in website — dashboard, accounts, transactions, reports, and the Rima chat UI — see the table above. |
 | `Dockerfile` / `.dockerignore` / `DEPLOYMENT.md` | Containerizing and putting this on AWS for testing — see `DEPLOYMENT.md`. |
 | `tray.pyw` / `requirements-tray.txt` | Windows system tray launcher — starts the server, opens `/chat`, shows connection status. See "Windows tray launcher" above. |
 
@@ -204,3 +234,12 @@ ledger, then balance — rather than generic pandas filter/groupby calls:
   a plain reply with no tool calls, memory carried across two calls in the
   same conversation, and two different `conversation_id`s staying isolated
   from each other.
+- `tests/test_main_endpoints.py` — the website/API endpoints via FastAPI's
+  `TestClient` against an isolated seeded DB (never the real
+  `accounting.db`): every page route serves HTML, the three new report
+  endpoints, and the account/transaction delete safety checks (blocked by
+  child accounts, blocked by existing transactions, cascading delete of a
+  transaction's line items). Uses `poolclass=StaticPool` in
+  `tests/conftest.py`'s `db_session` fixture — `TestClient` runs sync route
+  handlers in a worker thread, and plain in-memory SQLite otherwise hands
+  each thread a separate, empty database.

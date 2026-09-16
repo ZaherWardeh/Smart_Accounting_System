@@ -1,17 +1,23 @@
-from fastapi import FastAPI, Depends, status, HTTPException, Body
+from typing import List, Optional
+
+from fastapi import FastAPI, Depends, status, HTTPException, Body, Query
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload
 from database import sessionLocal, engine, Base
 from models import Accounts, TransactionsMaster, TransactionsDetail
 from schemas import AccountCreate, AccountOut, TransactionMasterCreate, TransactionSchema, AskAIRequest, AskAIResponse
 from datetime import datetime
 from reports import get_financial_summary
+from tools import get_chart_of_accounts, get_account_transactions, get_account_balance
 from graph import run_agent, is_llm_connected
 
 app = FastAPI()
 
 # إنشاء الجداول في قاعدة البيانات
 Base.metadata.create_all(bind=engine)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # دالة لجلب جلسة قاعدة البيانات
 def get_db():
@@ -23,11 +29,23 @@ def get_db():
 
 @app.get("/")
 def home():
-    return {"message": "مرحباً بكل في برنامج المحاسب الذكي 🚀"}
+    return FileResponse("static/index.html")
 
 @app.get("/health")
 def health():
     return {"status": "ok", "llm_connected": is_llm_connected()}
+
+@app.get("/accounts")
+def accounts_page():
+    return FileResponse("static/accounts.html")
+
+@app.get("/transactions")
+def transactions_page():
+    return FileResponse("static/transactions.html")
+
+@app.get("/reports")
+def reports_page():
+    return FileResponse("static/reports.html")
 
 @app.get("/chat")
 def chat_page():
@@ -68,6 +86,20 @@ def update_account(account: AccountOut = Body(...), db: Session = Depends(get_db
     db.commit()
     db.refresh(db_account)
     return AccountOut.model_validate(db_account)
+
+@app.delete("/accounts/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(id: int, db: Session = Depends(get_db)):
+    db_account = db.query(Accounts).filter(Accounts.id == id).first()
+    if not db_account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    has_children = db.query(Accounts).filter(Accounts.parentAccount == id).first() is not None
+    if has_children:
+        raise HTTPException(status_code=409, detail="Cannot delete a master account that has child accounts")
+    has_transactions = db.query(TransactionsDetail).filter(TransactionsDetail.acc_id == id).first() is not None
+    if has_transactions:
+        raise HTTPException(status_code=409, detail="Cannot delete an account that has transactions posted to it")
+    db.delete(db_account)
+    db.commit()
 
 # معاملات
 @app.get("/transactions/")
@@ -197,10 +229,43 @@ def update_transaction(transaction: TransactionSchema = Body(...), db: Session =
         ]
     }
 
+@app.delete("/transactions/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transaction(id: int, db: Session = Depends(get_db)):
+    db_transaction = db.query(TransactionsMaster).filter(TransactionsMaster.id == id).first()
+    if not db_transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    db.delete(db_transaction)
+    db.commit()
+
 #تقارير + ذكاء صناعي
 @app.get("/reports/summery")
 def get_summery(db : Session = Depends(get_db)):
     return get_financial_summary(db)
+
+@app.get("/reports/chart-of-accounts")
+def get_chart_of_accounts_report(db: Session = Depends(get_db)):
+    return get_chart_of_accounts(db)
+
+@app.get("/reports/statement/{acc_id}")
+def get_statement_of_account(
+    acc_id: int,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    if not db.query(Accounts).filter(Accounts.id == acc_id).first():
+        raise HTTPException(status_code=404, detail="Account not found")
+    return get_account_transactions(db, acc_id, date_from, date_to)
+
+@app.get("/reports/balance")
+def get_balance_report(
+    acc_ids: List[int] = Query(...),
+    as_of_date: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    return get_account_balance(db, acc_ids, as_of_date, date_from, date_to)
 
 @app.post("/reports/ask_ai", response_model=AskAIResponse)
 def ask_ai(request: AskAIRequest = Body(...), db: Session = Depends(get_db)):

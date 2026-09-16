@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>القيود — نظام المحاسبة الذكي</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .lines-table th, .lines-table td { padding: 6px 8px; }
+  .lines-table select, .lines-table input { width: 100%; }
+  .totals-row { display:flex; gap:16px; margin-top:10px; font-size:13.5px; }
+  .totals-row .ok { color: var(--accent-dark); font-weight: 600; }
+  .totals-row .bad { color: var(--danger); font-weight: 600; }
+</style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="brand"><span class="dot">ر</span> نظام المحاسبة الذكي</div>
+    <nav>
+      <a href="/">الرئيسية</a>
+      <a href="/accounts">الحسابات</a>
+      <a href="/transactions" class="active">القيود</a>
+      <a href="/reports">التقارير</a>
+      <a href="/chat">ريما 🤖</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <h1>القيود المحاسبية</h1>
+    <p class="subtitle">استعراض، إضافة، تعديل، وحذف القيود. كل قيد لازم يكون متوازن (مجموع المدين = مجموع الدائن).</p>
+
+    <div id="alertBox"></div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h2 style="margin:0;">كل القيود</h2>
+        <button class="btn btn-primary" id="addBtn" type="button">+ قيد جديد</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>المعرف</th>
+              <th>التاريخ</th>
+              <th>ملاحظات</th>
+              <th>إجمالي مدين</th>
+              <th>إجمالي دائن</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody id="txBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" hidden>لا يوجد قيود بعد.</div>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-overlay" id="modalOverlay" hidden>
+    <div class="modal" style="max-width: 760px;">
+      <h2 id="modalTitle">قيد جديد</h2>
+      <form id="txForm">
+        <div class="field-row">
+          <div class="field">
+            <label for="txDate">التاريخ</label>
+            <input type="date" id="txDate">
+          </div>
+          <div class="field" style="flex:2;">
+            <label for="txNotes">ملاحظات</label>
+            <input type="text" id="txNotes">
+          </div>
+        </div>
+
+        <table class="lines-table">
+          <thead>
+            <tr>
+              <th style="width:34%;">الحساب</th>
+              <th>مدين</th>
+              <th>دائن</th>
+              <th>الوصف</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="linesBody"></tbody>
+        </table>
+        <button type="button" class="btn btn-sm" id="addLineBtn">+ إضافة سطر</button>
+
+        <div class="totals-row">
+          <span>إجمالي مدين: <b id="totalDebit">0</b></span>
+          <span>إجمالي دائن: <b id="totalCredit">0</b></span>
+          <span id="balanceStatus"></span>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn" id="cancelBtn">إلغاء</button>
+          <button type="submit" class="btn btn-primary" id="saveBtn">حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+  let transactions = [];
+  let bookAccounts = []; // only postable (non-master) accounts
+  let editingId = null;
+
+  function showAlert(msg, type = 'error') {
+    document.getElementById('alertBox').innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  }
+  function clearAlert() { document.getElementById('alertBox').innerHTML = ''; }
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+
+  function sumOf(tx, field) {
+    return tx.details.reduce((s, d) => s + (Number(d[field]) || 0), 0);
+  }
+
+  function renderTable() {
+    const body = document.getElementById('txBody');
+    const empty = document.getElementById('emptyState');
+    if (transactions.length === 0) {
+      body.innerHTML = '';
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    body.innerHTML = transactions.map(tx => `
+      <tr>
+        <td>${tx.id}</td>
+        <td>${(tx.date || '').toString().slice(0, 10)}</td>
+        <td>${tx.notes || ''}</td>
+        <td>${fmt(sumOf(tx, 'debit'))}</td>
+        <td>${fmt(sumOf(tx, 'credit'))}</td>
+        <td class="row-actions">
+          <button class="btn btn-sm" onclick="openEdit(${tx.id})">تعديل</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteTx(${tx.id})">حذف</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadTransactions() {
+    try {
+      const res = await fetch('/transactions/');
+      transactions = await res.json();
+      renderTable();
+    } catch (e) {
+      showAlert('تعذر تحميل القيود.');
+    }
+  }
+
+  async function loadBookAccounts() {
+    try {
+      const res = await fetch('/reports/chart-of-accounts');
+      const all = await res.json();
+      bookAccounts = all.filter(a => a.account_type === 'book');
+    } catch (e) {
+      showAlert('تعذر تحميل دليل الحسابات.');
+    }
+  }
+
+  function accountOptions(selectedId) {
+    return bookAccounts.map(a =>
+      `<option value="${a.id}" ${a.id === selectedId ? 'selected' : ''}>${a.name}</option>`
+    ).join('');
+  }
+
+  function addLineRow(line = {}) {
+    const body = document.getElementById('linesBody');
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><select class="line-acc">${accountOptions(line.acc_id)}</select></td>
+      <td><input type="number" step="0.01" class="line-debit" value="${line.debit ?? ''}"></td>
+      <td><input type="number" step="0.01" class="line-credit" value="${line.credit ?? ''}"></td>
+      <td><input type="text" class="line-desc" value="${line.description ?? ''}"></td>
+      <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); updateTotals();">✕</button></td>
+    `;
+    body.appendChild(row);
+    row.querySelector('.line-debit').addEventListener('input', updateTotals);
+    row.querySelector('.line-credit').addEventListener('input', updateTotals);
+  }
+
+  function updateTotals() {
+    const debits = [...document.querySelectorAll('.line-debit')].map(i => Number(i.value) || 0);
+    const credits = [...document.querySelectorAll('.line-credit')].map(i => Number(i.value) || 0);
+    const totalDebit = debits.reduce((a, b) => a + b, 0);
+    const totalCredit = credits.reduce((a, b) => a + b, 0);
+    document.getElementById('totalDebit').textContent = fmt(totalDebit);
+    document.getElementById('totalCredit').textContent = fmt(totalCredit);
+    const balanced = Math.abs(totalDebit - totalCredit) < 0.0001 && totalDebit > 0;
+    const statusEl = document.getElementById('balanceStatus');
+    statusEl.innerHTML = balanced
+      ? '<span class="ok">✓ متوازن</span>'
+      : '<span class="bad">✗ غير متوازن</span>';
+    document.getElementById('saveBtn').disabled = !balanced;
+    return balanced;
+  }
+
+  function openModal() { document.getElementById('modalOverlay').hidden = false; }
+  function closeModal() { document.getElementById('modalOverlay').hidden = true; }
+
+  function resetLines() {
+    document.getElementById('linesBody').innerHTML = '';
+    addLineRow();
+    addLineRow();
+    updateTotals();
+  }
+
+  function openAdd() {
+    editingId = null;
+    document.getElementById('modalTitle').textContent = 'قيد جديد';
+    document.getElementById('txDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('txNotes').value = '';
+    resetLines();
+    openModal();
+  }
+
+  async function openEdit(id) {
+    clearAlert();
+    try {
+      const res = await fetch(`/transactions/${id}`);
+      if (!res.ok) { showAlert('تعذر تحميل القيد.'); return; }
+      const tx = await res.json();
+      editingId = id;
+      document.getElementById('modalTitle').textContent = 'تعديل قيد';
+      document.getElementById('txDate').value = (tx.date || '').toString().slice(0, 10);
+      document.getElementById('txNotes').value = tx.notes || '';
+      document.getElementById('linesBody').innerHTML = '';
+      (tx.details || []).forEach(d => addLineRow({ acc_id: d.acc_id, debit: d.debit, credit: d.credit, description: d.description }));
+      updateTotals();
+      openModal();
+    } catch (e) {
+      showAlert('تعذر الاتصال بالخادم.');
+    }
+  }
+
+  async function deleteTx(id) {
+    if (!confirm('متأكد من حذف هذا القيد؟')) return;
+    clearAlert();
+    try {
+      const res = await fetch(`/transactions/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.detail || `تعذر حذف القيد (${res.status}).`);
+        return;
+      }
+      await loadTransactions();
+    } catch (e) {
+      showAlert('تعذر الاتصال بالخادم.');
+    }
+  }
+
+  document.getElementById('addBtn').addEventListener('click', openAdd);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+  document.getElementById('addLineBtn').addEventListener('click', () => { addLineRow(); updateTotals(); });
+
+  document.getElementById('txForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearAlert();
+    if (!updateTotals()) {
+      showAlert('القيد غير متوازن — مجموع المدين لازم يساوي مجموع الدائن.');
+      return;
+    }
+    const rows = [...document.querySelectorAll('#linesBody tr')];
+    const items = rows.map(row => ({
+      acc_id: Number(row.querySelector('.line-acc').value),
+      debit: Number(row.querySelector('.line-debit').value) || 0,
+      credit: Number(row.querySelector('.line-credit').value) || 0,
+      description: row.querySelector('.line-desc').value,
+    }));
+
+    const payload = {
+      date: document.getElementById('txDate').value ? new Date(document.getElementById('txDate').value).toISOString() : null,
+      notes: document.getElementById('txNotes').value,
+      items,
+    };
+
+    try {
+      let res;
+      if (editingId) {
+        res = await fetch('/transactions/', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editingId, ...payload }),
+        });
+      } else {
+        res = await fetch('/transactions/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.detail || `تعذر حفظ القيد (${res.status}).`);
+        return;
+      }
+      closeModal();
+      await loadTransactions();
+    } catch (e) {
+      showAlert('تعذر الاتصال بالخادم.');
+    }
+  });
+
+  loadBookAccounts().then(loadTransactions);
+</script>
+</body>
+</html>

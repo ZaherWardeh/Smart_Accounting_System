@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>التقارير — نظام المحاسبة الذكي</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .acc-checklist {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+  }
+  .acc-checklist label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    padding: 4px 0;
+    color: var(--text);
+  }
+  .hint { font-size: 12px; color: var(--muted); margin: -4px 0 10px; }
+</style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="brand"><span class="dot">ر</span> نظام المحاسبة الذكي</div>
+    <nav>
+      <a href="/">الرئيسية</a>
+      <a href="/accounts">الحسابات</a>
+      <a href="/transactions">القيود</a>
+      <a href="/reports" class="active">التقارير</a>
+      <a href="/chat">ريما 🤖</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <h1>التقارير</h1>
+    <p class="subtitle">ملخص مالي، دليل الحسابات، كشف حساب، وأرصدة الحسابات.</p>
+
+    <div id="alertBox"></div>
+
+    <div class="card">
+      <h2>ملخص مالي</h2>
+      <div class="stat-row" id="summaryStats">
+        <div class="stat"><div class="label">إجمالي الإيرادات</div><div class="value">...</div></div>
+        <div class="stat"><div class="label">إجمالي المصاريف</div><div class="value">...</div></div>
+        <div class="stat"><div class="label">الرصيد</div><div class="value">...</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>دليل الحسابات</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>نوع الإغلاق</th><th>الحساب الأب</th></tr></thead>
+          <tbody id="chartBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>كشف حساب</h2>
+        <div class="field">
+          <label for="stAccount">الحساب</label>
+          <select id="stAccount"></select>
+        </div>
+        <p class="hint">إذا كان الحساب رئيسياً، بيشمل الكشف حركة كل الحسابات الفرعية تحته.</p>
+        <div class="field-row">
+          <div class="field"><label for="stFrom">من تاريخ</label><input type="date" id="stFrom"></div>
+          <div class="field"><label for="stTo">إلى تاريخ</label><input type="date" id="stTo"></div>
+        </div>
+        <button class="btn btn-primary" id="stBtn" type="button">عرض الكشف</button>
+        <div class="table-wrap" style="margin-top:14px;">
+          <table>
+            <thead><tr><th>التاريخ</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>الوصف</th></tr></thead>
+            <tbody id="stBody"></tbody>
+          </table>
+          <div class="empty-state" id="stEmpty" hidden>لا يوجد حركة ضمن هذا النطاق.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>رصيد الحسابات</h2>
+        <div class="field">
+          <label>اختر حساب أو أكثر</label>
+          <div class="acc-checklist" id="balChecklist"></div>
+        </div>
+        <p class="hint">"كتاريخ" تُستخدم لحسابات الميزانية العمومية، و"من/إلى" لحسابات الأرباح والمصاريف.</p>
+        <div class="field-row">
+          <div class="field"><label for="balAsOf">كتاريخ (ميزانية عمومية)</label><input type="date" id="balAsOf"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="balFrom">من تاريخ (أرباح/مصاريف)</label><input type="date" id="balFrom"></div>
+          <div class="field"><label for="balTo">إلى تاريخ (أرباح/مصاريف)</label><input type="date" id="balTo"></div>
+        </div>
+        <button class="btn btn-primary" id="balBtn" type="button">احسب الرصيد</button>
+        <div id="balResult" style="margin-top:14px;"></div>
+      </div>
+    </div>
+  </main>
+
+<script>
+  const CLOSE_IN_LABELS = { 0: "ميزانية عمومية", 1: "أرباح وخسائر", 2: "متاجرة" };
+  let chart = [];
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+  function showAlert(msg) { document.getElementById('alertBox').innerHTML = `<div class="alert alert-error">${msg}</div>`; }
+  function clearAlert() { document.getElementById('alertBox').innerHTML = ''; }
+  function nameOf(id) { const a = chart.find(a => a.id === id); return a ? a.name : '—'; }
+
+  async function loadSummary() {
+    try {
+      const res = await fetch('/reports/summery');
+      const data = await res.json();
+      const el = document.getElementById('summaryStats');
+      if (data.Message) { el.innerHTML = `<div class="empty-state">${data.Message}</div>`; return; }
+      el.innerHTML = `
+        <div class="stat"><div class="label">إجمالي الإيرادات</div><div class="value">${fmt(data['Total Income'])}</div></div>
+        <div class="stat"><div class="label">إجمالي المصاريف</div><div class="value">${fmt(data['Total Expense'])}</div></div>
+        <div class="stat"><div class="label">الرصيد</div><div class="value">${fmt(data['Balance'])}</div></div>
+      `;
+    } catch (e) { showAlert('تعذر تحميل الملخص المالي.'); }
+  }
+
+  async function loadChart() {
+    try {
+      const res = await fetch('/reports/chart-of-accounts');
+      chart = await res.json();
+
+      document.getElementById('chartBody').innerHTML = chart.map(a => `
+        <tr>
+          <td>${a.id}</td>
+          <td>${a.name}</td>
+          <td>${a.account_type === 'master' ? '<span class="badge master">رئيسي</span>' : '<span class="badge">فرعي</span>'}</td>
+          <td>${CLOSE_IN_LABELS[typeof a.closeIn === 'number' ? a.closeIn : { 'Balance Sheet': 0, 'P&L': 1, 'Trading': 2 }[a.closeIn]] || a.closeIn}</td>
+          <td>${a.parentAccount ? nameOf(a.parentAccount) : '—'}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('stAccount').innerHTML = chart.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+
+      document.getElementById('balChecklist').innerHTML = chart.map(a => `
+        <label><input type="checkbox" value="${a.id}"> ${a.name} ${a.account_type === 'master' ? '(رئيسي)' : ''}</label>
+      `).join('');
+    } catch (e) { showAlert('تعذر تحميل دليل الحسابات.'); }
+  }
+
+  async function showStatement() {
+    clearAlert();
+    const accId = document.getElementById('stAccount').value;
+    if (!accId) return;
+    const params = new URLSearchParams();
+    if (document.getElementById('stFrom').value) params.set('date_from', document.getElementById('stFrom').value);
+    if (document.getElementById('stTo').value) params.set('date_to', document.getElementById('stTo').value);
+
+    try {
+      const res = await fetch(`/reports/statement/${accId}?${params.toString()}`);
+      if (!res.ok) { showAlert('تعذر تحميل كشف الحساب.'); return; }
+      const rows = await res.json();
+      const body = document.getElementById('stBody');
+      const empty = document.getElementById('stEmpty');
+      if (rows.length === 0) { body.innerHTML = ''; empty.hidden = false; return; }
+      empty.hidden = true;
+      body.innerHTML = rows.map(r => `
+        <tr>
+          <td>${r.date || '—'}</td>
+          <td>${r.acc_name || ''}</td>
+          <td>${fmt(r.debit)}</td>
+          <td>${fmt(r.credit)}</td>
+          <td>${r.description || ''}</td>
+        </tr>
+      `).join('');
+    } catch (e) { showAlert('تعذر الاتصال بالخادم.'); }
+  }
+
+  async function calcBalance() {
+    clearAlert();
+    const ids = [...document.querySelectorAll('#balChecklist input:checked')].map(i => i.value);
+    if (ids.length === 0) { showAlert('اختر حساب واحد على الأقل.'); return; }
+
+    const params = new URLSearchParams();
+    ids.forEach(id => params.append('acc_ids', id));
+    if (document.getElementById('balAsOf').value) params.set('as_of_date', document.getElementById('balAsOf').value);
+    if (document.getElementById('balFrom').value) params.set('date_from', document.getElementById('balFrom').value);
+    if (document.getElementById('balTo').value) params.set('date_to', document.getElementById('balTo').value);
+
+    try {
+      const res = await fetch(`/reports/balance?${params.toString()}`);
+      if (!res.ok) { showAlert('تعذر حساب الرصيد.'); return; }
+      const data = await res.json();
+      const rows = data.breakdown.map(b => b.error
+        ? `<tr><td>${b.acc_id}</td><td colspan="3">${b.error}</td></tr>`
+        : `<tr><td>${b.acc_name}</td><td>${fmt(b.debit_sum)}</td><td>${fmt(b.credit_sum)}</td><td>${fmt(b.net)}</td></tr>`
+      ).join('');
+      document.getElementById('balResult').innerHTML = `
+        <div class="stat-row">
+          <div class="stat"><div class="label">إجمالي مدين</div><div class="value">${fmt(data.debit_sum)}</div></div>
+          <div class="stat"><div class="label">إجمالي دائن</div><div class="value">${fmt(data.credit_sum)}</div></div>
+          <div class="stat"><div class="label">الصافي</div><div class="value">${fmt(data.net)}</div></div>
+        </div>
+        <div class="table-wrap" style="margin-top:12px;">
+          <table>
+            <thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th><th>الصافي</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    } catch (e) { showAlert('تعذر الاتصال بالخادم.'); }
+  }
+
+  document.getElementById('stBtn').addEventListener('click', showStatement);
+  document.getElementById('balBtn').addEventListener('click', calcBalance);
+
+  loadSummary();
+  loadChart();
+</script>
+</body>
+</html>
