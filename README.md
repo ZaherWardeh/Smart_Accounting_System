@@ -162,7 +162,7 @@ Two things worth knowing about this:
 | `reports.py` | `get_financial_summary`, used by `/reports/summery` — the only other place in the app that touches transaction data outside the AI path. |
 | `models.py` / `schemas.py` / `database.py` | SQLAlchemy models, Pydantic schemas, SQLite session setup — unchanged in shape by this migration except the Pydantic v2 fixes below. |
 | `static/*.html` / `static/app.css` | The built-in website — dashboard, accounts, transactions, reports, and the Rima chat UI — see the table above. |
-| `Dockerfile` / `.dockerignore` / `render.yaml` / `fly.toml` / `DEPLOYMENT.md` | Containerizing and putting this online for testing (Render, Fly.io, or AWS) — see `DEPLOYMENT.md`. |
+| `Dockerfile` / `.dockerignore` / `render.yaml` / `fly.toml` / `web.config` / `docker-compose.yml` / `deploy/` / `DEPLOYMENT.md` | Deploying this — Render, Fly.io, AWS, your own Windows/IIS or Ubuntu server, with or without Docker — see `DEPLOYMENT.md`. |
 | `tray.pyw` / `requirements-tray.txt` | Windows system tray launcher — starts the server, opens `/chat`, shows connection status. See "Windows tray launcher" above. |
 
 ### The three domain tools

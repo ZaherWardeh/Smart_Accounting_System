@@ -16,7 +16,10 @@ pick based on what you care about more:
   verify you're not a bot, even though it won't be charged within the
   free allowance.
 
-AWS is kept further down as a third alternative.
+AWS is kept further down as a third alternative, and if you have your own
+server instead of a cloud platform, jump straight to
+**[section 7 (Windows/IIS)](#7-your-own-server-no-docker-iis-windows-server)**
+or **[section 8 (Ubuntu)](#8-your-own-server-ubuntu-static-ip)**.
 
 Nothing here deploys on its own — these are the files and the exact
 commands, for you to run yourself (account creation and anything
@@ -228,7 +231,156 @@ real VM is not).
    instance profile + Secrets Manager/SSM Parameter Store instead, and pull
    it into the environment via the instance's startup script.
 
-## 7. What's in the repo for this
+## 7. Your own server, no Docker: IIS (Windows Server)
+
+If you already have a Windows Server with a static IP and just want IIS to
+run this directly - no container, no separate process manager - install
+Microsoft's **HttpPlatformHandler** module. It lets IIS launch and
+supervise the Python process itself (start it when the site starts,
+restart it if it dies), forwarding every request to it. `web.config` in
+the repo already has this wired up.
+
+1. Install Python on the server and set up the venv:
+   ```powershell
+   cd C:\inetpub\smart-accounting   # or wherever you put the repo
+   python -m venv .venv
+   .venv\Scripts\pip install -r requirements.txt
+   ```
+2. Install **IIS** (Windows Features) and the
+   [HttpPlatformHandler module](https://www.iis.net/downloads/microsoft/httpplatformhandler)
+   (a small standalone installer from Microsoft, not part of Windows by
+   default).
+3. Edit `web.config`'s `processPath` to point at your venv's
+   `python.exe` (the one from step 1) - it's a machine-specific absolute
+   path, can't be guessed in advance.
+4. Set `API_KEY` as a **machine-level environment variable** on the server
+   (not in `web.config`, which is meant to be committed):
+   ```powershell
+   setx API_KEY "your-gemini-api-key" /M
+   ```
+   Restart the server (or at least IIS: `iisreset`) afterward so the new
+   variable is picked up - the Python process IIS spawns inherits it
+   automatically, no extra wiring needed.
+5. In **IIS Manager**: right-click **Sites** → **Add Website**. Point
+   **Physical path** at the repo folder (the one containing `web.config`),
+   set the **Binding** (port 80, or 443 with a certificate — pick one via
+   *Server Certificates* in IIS Manager, or use a tool like `win-acme` for
+   a free Let's Encrypt one). Under **Application Pools**, make sure this
+   site's pool has **.NET CLR version = No Managed Code** (it's running
+   Python, not .NET).
+6. Start the site from IIS Manager. Open `http://<your-static-ip>/` (or
+   your domain, once DNS points at it) - IIS starts the Python process on
+   first request.
+
+`accounting.db` sits directly in the repo folder on disk, like any other
+file - no volume/mount concept needed here, it just persists as long as
+the folder does. To update after a `git pull`, no redeploy step is
+required beyond restarting the site (IIS Manager → **Restart**) so the new
+code is picked up; `pip install -r requirements.txt` again first if
+dependencies changed.
+
+## 8. Your own server: Ubuntu, static IP
+
+Best practice regardless of which scenario below you pick: the app itself
+only ever listens on `127.0.0.1:8000` (never `0.0.0.0`) - **Nginx is what's
+actually reachable from the internet**, terminating TLS and reverse-
+proxying to the app. That's what `deploy/nginx.conf` sets up. Reasons:
+free, real HTTPS (Certbot/Let's Encrypt) without the app needing to know
+anything about certificates; a normal place to add rate limiting or
+basic auth later if you ever need it; and the app process never has to
+run as root or bind a privileged port itself.
+
+```bash
+sudo apt update && sudo apt install -y nginx
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/smart-accounting
+# edit server_name in that file to your domain or the server's IP first
+sudo ln -s /etc/nginx/sites-available/smart-accounting /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+sudo apt install -y certbot python3-certbot-nginx   # skip if you have no domain yet
+sudo certbot --nginx -d your-domain.example
+
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'   # 80 + 443 - port 8000 is never opened to the internet
+sudo ufw enable
+```
+
+Do this once, then pick a scenario for what actually runs behind it:
+
+### Scenario 1: plain venv + systemd (no Docker)
+
+Closest Linux equivalent to the IIS approach above - a normal Python
+process, supervised by `systemd` instead of IIS, so it starts on boot and
+restarts itself if it crashes. `deploy/smart-accounting.service` has this
+wired up.
+
+```bash
+sudo adduser --system --group --home /opt/smart-accounting smart-accounting
+sudo -u smart-accounting git clone <this-repo-url> /opt/smart-accounting
+cd /opt/smart-accounting
+sudo -u smart-accounting python3 -m venv .venv
+sudo -u smart-accounting .venv/bin/pip install -r requirements.txt
+sudo -u smart-accounting cp .env.example .env   # then edit in API_KEY (see below)
+
+sudo cp deploy/smart-accounting.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now smart-accounting
+sudo systemctl status smart-accounting   # confirm it's "active (running)"
+```
+
+`.env` (owned by the `smart-accounting` user, mode `600` is fine) holds
+`API_KEY=...` - the unit file's `EnvironmentFile=` line loads it, so
+`os.getenv("API_KEY")` in `graph.py` sees it exactly like it does locally.
+
+To update after a `git pull`:
+```bash
+cd /opt/smart-accounting
+sudo -u smart-accounting git pull
+sudo -u smart-accounting .venv/bin/pip install -r requirements.txt   # if deps changed
+sudo systemctl restart smart-accounting
+```
+
+`accounting.db` is just a file under `/opt/smart-accounting` - persists on
+its own, no extra config.
+
+### Scenario 2: Docker
+
+`docker-compose.yml` in the repo does the equivalent of the EC2 `docker
+run` command in section 6, more maintainably.
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER   # log out/in once for this to take effect
+
+git clone <this-repo-url> smart-accounting
+cd smart-accounting
+cp .env.example .env   # edit in API_KEY
+
+docker compose up -d --build
+docker compose logs -f   # confirm it started cleanly, then Ctrl+C
+```
+
+To update after a `git pull`:
+```bash
+git pull
+docker compose up -d --build
+```
+
+`docker-compose.yml` bind-mounts `./accounting.db` straight into the
+container (`-v ./accounting.db:/app/accounting.db`, same idea as the EC2
+example) and binds the container's port only to `127.0.0.1`, so - same as
+scenario 1 - Nginx is the only thing actually reachable from outside.
+
+### Which one?
+
+Docker if you'll ever run more than one app on this box, want the
+environment to exactly match what `docker build` produces locally, or
+expect to redo this on another server later. Plain venv + systemd if you'd
+rather avoid learning Docker at all and are fine managing Python/system
+packages directly - it's a few fewer moving parts for a single app on a
+box you already control.
+
+## 9. What's in the repo for this
 
 | File | Purpose |
 | --- | --- |
@@ -238,4 +390,9 @@ real VM is not).
 | `.dockerignore` | Keeps `.venv`, `.git`, `.env`, `tests/` out of the image. `accounting.db` is intentionally *not* excluded — it's the seed data, see section 2. |
 | `fly.toml` | Fly.io app config: the persistent volume mount, `DATABASE_URL`/`SQLITE_DATA_DIR`, and the single-instance settings. Edit the `app` name before your first deploy. |
 | `render.yaml` | Render Blueprint: Docker build, free plan, health check path, `API_KEY` marked as a secret you fill in during setup. |
+| `web.config` | IIS + HttpPlatformHandler config for a Windows Server, no Docker - see section 7. |
+| `docker-compose.yml` | Ubuntu + Docker, scenario 2 in section 8 - `docker compose up -d --build`, bind-mounted DB, port bound to `127.0.0.1` only. |
+| `deploy/smart-accounting.service` | systemd unit for Ubuntu + plain venv, scenario 1 in section 8. |
+| `deploy/nginx.conf` | Reverse proxy in front of either Ubuntu scenario - real HTTPS via Certbot, the app itself never directly exposed. |
+| `.env.example` | Template for the `.env` file both Ubuntu scenarios copy and fill in `API_KEY` from. |
 | `static/chat.html` | The Rima testing chat UI, served at `GET /chat`. |
