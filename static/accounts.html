@@ -29,22 +29,8 @@
         <h2 style="margin:0;">كل الحسابات</h2>
         <button class="btn btn-primary" id="addBtn" type="button">+ حساب جديد</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>المعرف</th>
-              <th>الاسم</th>
-              <th>النوع</th>
-              <th>نوع الإغلاق</th>
-              <th>الحساب الأب</th>
-              <th>إجراءات</th>
-            </tr>
-          </thead>
-          <tbody id="accountsBody"></tbody>
-        </table>
-        <div class="empty-state" id="emptyState" hidden>لا يوجد حسابات بعد.</div>
-      </div>
+      <div class="tree" id="accountsTree"></div>
+      <div class="empty-state" id="emptyState" hidden>لا يوجد حسابات بعد.</div>
     </div>
   </main>
 
@@ -93,43 +79,72 @@
     document.getElementById('alertBox').innerHTML = '';
   }
 
-  function accountTypeOf(id) {
-    return accounts.some(a => a.parentAccount === id) ? 'master' : 'book';
+  function renderNode(a, childrenOf) {
+    const kids = childrenOf[a.id] || [];
+    const isMaster = kids.length > 0;
+    const badge = isMaster
+      ? '<span class="badge master">رئيسي</span>'
+      : '<span class="badge">فرعي</span>';
+    const toggle = isMaster
+      ? '<span class="tree-toggle" onclick="toggleNode(this)">▾</span>'
+      : '<span class="tree-toggle leaf"></span>';
+
+    let html = `
+      <li>
+        <div class="tree-node">
+          ${toggle}
+          <span class="tree-name">${a.name}</span>
+          ${badge}
+          <span class="tree-meta">${CLOSE_IN_LABELS[a.closeIn] ?? a.closeIn} · #${a.id}</span>
+          <span class="row-actions">
+            <button class="btn btn-sm" onclick="openEdit(${a.id})">تعديل</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">حذف</button>
+          </span>
+        </div>
+    `;
+    if (isMaster) {
+      html += `<ul>${kids.map(k => renderNode(k, childrenOf)).join('')}</ul>`;
+    }
+    html += `</li>`;
+    return html;
   }
 
-  function nameOf(id) {
-    const a = accounts.find(a => a.id === id);
-    return a ? a.name : '—';
+  function toggleNode(el) {
+    const li = el.closest('li');
+    const sub = li.querySelector(':scope > ul');
+    if (!sub) return;
+    if (sub.hasAttribute('hidden')) {
+      sub.removeAttribute('hidden');
+      el.textContent = '▾';
+    } else {
+      sub.setAttribute('hidden', '');
+      el.textContent = '▸';
+    }
   }
 
-  function renderTable() {
-    const body = document.getElementById('accountsBody');
+  function renderTree() {
+    const container = document.getElementById('accountsTree');
     const empty = document.getElementById('emptyState');
     if (accounts.length === 0) {
-      body.innerHTML = '';
+      container.innerHTML = '';
       empty.hidden = false;
       return;
     }
     empty.hidden = true;
-    body.innerHTML = accounts.map(a => {
-      const type = accountTypeOf(a.id);
-      const badge = type === 'master'
-        ? '<span class="badge master">رئيسي</span>'
-        : '<span class="badge">فرعي</span>';
-      return `
-        <tr>
-          <td>${a.id}</td>
-          <td>${a.name}</td>
-          <td>${badge}</td>
-          <td>${CLOSE_IN_LABELS[a.closeIn] ?? a.closeIn}</td>
-          <td>${a.parentAccount ? nameOf(a.parentAccount) : '—'}</td>
-          <td class="row-actions">
-            <button class="btn btn-sm" onclick="openEdit(${a.id})">تعديل</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">حذف</button>
-          </td>
-        </tr>
-      `;
-    }).join('');
+
+    const idSet = new Set(accounts.map(a => a.id));
+    const childrenOf = {};
+    accounts.forEach(a => {
+      (childrenOf[a.parentAccount] = childrenOf[a.parentAccount] || []).push(a);
+    });
+    Object.values(childrenOf).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name, 'ar')));
+
+    // treat an account as a root if it has no parent, or its parent no longer exists
+    const roots = accounts
+      .filter(a => a.parentAccount === null || !idSet.has(a.parentAccount))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+
+    container.innerHTML = `<ul>${roots.map(a => renderNode(a, childrenOf)).join('')}</ul>`;
   }
 
   function populateParentSelect() {
@@ -147,7 +162,7 @@
     try {
       const res = await fetch('/accounts/');
       accounts = await res.json();
-      renderTable();
+      renderTree();
       populateParentSelect();
     } catch (e) {
       showAlert('تعذر تحميل الحسابات.');

@@ -38,7 +38,7 @@
 
   <main class="page">
     <h1>التقارير</h1>
-    <p class="subtitle">ملخص مالي، دليل الحسابات، كشف حساب، وأرصدة الحسابات.</p>
+    <p class="subtitle">ملخص مالي، كشف حساب، وأرصدة الحسابات. لاستعراض دليل الحسابات على شكل شجرة، راجع صفحة <a href="/accounts">الحسابات</a>.</p>
 
     <div id="alertBox"></div>
 
@@ -48,16 +48,6 @@
         <div class="stat"><div class="label">إجمالي الإيرادات</div><div class="value">...</div></div>
         <div class="stat"><div class="label">إجمالي المصاريف</div><div class="value">...</div></div>
         <div class="stat"><div class="label">الرصيد</div><div class="value">...</div></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>دليل الحسابات</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>نوع الإغلاق</th><th>الحساب الأب</th></tr></thead>
-          <tbody id="chartBody"></tbody>
-        </table>
       </div>
     </div>
 
@@ -104,13 +94,11 @@
   </main>
 
 <script>
-  const CLOSE_IN_LABELS = { 0: "ميزانية عمومية", 1: "أرباح وخسائر", 2: "متاجرة" };
   let chart = [];
 
   function fmt(n) { return (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   function showAlert(msg) { document.getElementById('alertBox').innerHTML = `<div class="alert alert-error">${msg}</div>`; }
   function clearAlert() { document.getElementById('alertBox').innerHTML = ''; }
-  function nameOf(id) { const a = chart.find(a => a.id === id); return a ? a.name : '—'; }
 
   async function loadSummary() {
     try {
@@ -126,20 +114,10 @@
     } catch (e) { showAlert('تعذر تحميل الملخص المالي.'); }
   }
 
-  async function loadChart() {
+  async function loadAccountSelectors() {
     try {
       const res = await fetch('/reports/chart-of-accounts');
       chart = await res.json();
-
-      document.getElementById('chartBody').innerHTML = chart.map(a => `
-        <tr>
-          <td>${a.id}</td>
-          <td>${a.name}</td>
-          <td>${a.account_type === 'master' ? '<span class="badge master">رئيسي</span>' : '<span class="badge">فرعي</span>'}</td>
-          <td>${CLOSE_IN_LABELS[typeof a.closeIn === 'number' ? a.closeIn : { 'Balance Sheet': 0, 'P&L': 1, 'Trading': 2 }[a.closeIn]] || a.closeIn}</td>
-          <td>${a.parentAccount ? nameOf(a.parentAccount) : '—'}</td>
-        </tr>
-      `).join('');
 
       document.getElementById('stAccount').innerHTML = chart.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
 
@@ -216,7 +194,7 @@
   document.getElementById('balBtn').addEventListener('click', calcBalance);
 
   loadSummary();
-  loadChart();
+  loadAccountSelectors();
 </script>
 </body>
 </html>
