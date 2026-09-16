@@ -6,13 +6,18 @@ database that predates the `code` column). A brand new/empty database
 needs none of this: Base.metadata.create_all() creates the Accounts table
 with the `code` column already in it.
 
-Numbering scheme: depth-first pre-order traversal of the chart of
-accounts, root accounts taken in id order (in this dataset: Assets,
-Liabilities, Revenue, Expenses - the existing account creation order
-already groups them into sensible categories), children within each
-parent also taken in id order. Assets' whole subtree is numbered before
-moving to the next root, matching "start at 001 for assets and so on".
-Codes are zero-padded to 3 digits.
+Numbering scheme: hierarchical, parent-prefixed. Each of the top-level
+(root) accounts gets a 3-digit code in id order (001, 002, 003, ...).
+Every account below that gets its parent's code plus a 2-digit position
+among that parent's children, also in id order - so "Assets" = 001,
+"Fixed Assets" (Assets' 1st child) = 00101, "Assets" -> "Current Assets"
+(2nd child) -> "Customers" (1st child of that) = 0010201, and so on.
+Codes are plain, unseparated digit strings (no dots) so this repo's
+GET /reports/chart-of-accounts?/=&sort-by-code and the Accounts page's
+client-side sort both work with a single lexicographic string comparison
+(NOT numeric-aware collation - a fixed-width parent prefix is what keeps
+each subtree contiguous when sorted as plain strings; numeric collation
+would compare the whole digit run as one number and break that).
 
 Recomputes every account's code from the tree's current shape - re-running
 this after codes have been hand-edited through the UI will overwrite them.
@@ -50,16 +55,14 @@ def main():
     roots = sorted(children_of.get(None, []))
 
     codes = {}
-    counter = [0]
 
-    def visit(acc_id):
-        counter[0] += 1
-        codes[acc_id] = f"{counter[0]:03d}"
-        for child_id in children_of.get(acc_id, []):
-            visit(child_id)
+    def assign(acc_id, code):
+        codes[acc_id] = code
+        for position, child_id in enumerate(children_of.get(acc_id, []), start=1):
+            assign(child_id, code + f"{position:02d}")
 
-    for root_id in roots:
-        visit(root_id)
+    for position, root_id in enumerate(roots, start=1):
+        assign(root_id, f"{position:03d}")
 
     if len(codes) != len(rows):
         missing = set(accounts_by_id) - set(codes)
@@ -76,8 +79,9 @@ def main():
     print(f"\nBackfilled {len(codes)} accounts:\n")
     cur.execute("SELECT id, code, name, parentAccount FROM Accounts ORDER BY code")
     for r in cur.fetchall():
-        indent = "  " if r["parentAccount"] else ""
-        print(f"{r['code']}  {indent}{r['name']}  (id={r['id']}, parent={r['parentAccount']})")
+        depth = (len(r["code"]) - 3) // 2 if r["code"] else 0
+        indent = "  " * depth
+        print(f"{r['code']:<12} {indent}{r['name']}  (id={r['id']}, parent={r['parentAccount']})")
 
     conn.close()
 

@@ -197,15 +197,27 @@ ledger, then balance — rather than generic pandas filter/groupby calls:
 
 ### Account codes
 
-Every account has an optional `code` (e.g. `"001"`) shown next to its name
-throughout the site and sorted on wherever accounts are listed (the
-Accounts tree, the chart of accounts, statement/balance selectors, and the
-balance breakdown). `scripts/backfill_account_codes.py` is the one-off
-migration that added the column and assigned codes to this repo's dev
-`accounting.db` via a depth-first walk of the tree (Assets' whole subtree
-numbered 001-009 before moving to Liabilities, then Revenue, then
-Expenses) — kept for reference if you're migrating your own pre-existing
-database; a fresh/empty database gets the `code` column for free from
+Every account has an optional `code`, shown next to its name throughout the
+site and sorted on wherever accounts are listed (the Accounts tree, the
+chart of accounts, statement/balance selectors, and the balance
+breakdown).
+
+Codes are **hierarchical and parent-prefixed**, not flat: each root account
+gets a 3-digit code (`001`, `002`, ...), and every account below that gets
+its parent's code plus a 2-digit position among that parent's own children
+— so Assets = `001`, Assets' 1st child (Fixed Assets) = `00101`,
+Liabilities = `002`, and so on down as many levels as the tree goes (e.g.
+`0010201` is the 1st child of `00102`, which is Assets' 2nd child). A plain
+lexicographic string sort on these reconstructs the exact depth-first tree
+order with no separate tree-walk needed — that only works because every
+level adds a *fixed* 2 digits; a numeric-aware sort would compare the
+whole digit run as one number and break the nesting (see the comments in
+`scripts/backfill_account_codes.py` for why).
+
+`scripts/backfill_account_codes.py` is the one-off migration that added
+the column and assigned these codes to this repo's dev `accounting.db` —
+kept for reference if you're migrating your own pre-existing database; a
+fresh/empty database gets the `code` column for free from
 `Base.metadata.create_all()`.
 
 ## Known limitations
