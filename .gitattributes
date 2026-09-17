@@ -3,8 +3,5 @@
 # core.autocrlf=true. Force LF regardless of the checking-out platform.
 *.sh text eol=lf
 
-# Same concern for files meant to be parsed on a Linux server: systemd is
-# inconsistent about tolerating a trailing \r in unit files, and it's not
-# worth relying on nginx's parser being forgiving about it either.
-deploy/*.service text eol=lf
+# Same concern for nginx's config parser on the Linux server.
 deploy/nginx.conf text eol=lf
