@@ -12,3 +12,6 @@ __pycache__
 tests/
 
 MIGRATION_PLAN.md
+
+# Flutter mobile app - not part of the server image
+mobile/

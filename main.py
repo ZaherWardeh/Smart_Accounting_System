@@ -120,6 +120,7 @@ def get_transactions(db: Session = Depends(get_db)):
                     "id": detail.id,
                     "debit": detail.debit,
                     "credit": detail.credit,
+                    "description": detail.description,
                     "acc_id": detail.acc_id,
                     "acc_name": detail.rsAccounts.name if detail.rsAccounts else None
                 } for detail in transaction.rsTransactionsMaster
@@ -144,6 +145,7 @@ def get_transaction(id: int, db: Session = Depends(get_db)):
                 "id": detail.id,
                 "debit": detail.debit,
                 "credit": detail.credit,
+                "description": detail.description,
                 "acc_id": detail.acc_id,
                 "acc_name": detail.rsAccounts.name if detail.rsAccounts else None
             } for detail in transaction.rsTransactionsMaster
@@ -156,7 +158,8 @@ def CheckBalance(transaction: TransactionMasterCreate) -> bool:
     for i in transaction.items:
         total_debits += i.debit
         total_credits += i.credit
-    return total_debits == total_credits
+    # compare in cents so decimal amounts (0.1 + 0.2 vs 0.3) don't fail on float noise
+    return round(total_debits, 2) == round(total_credits, 2)
 
 @app.post("/transactions/", status_code=status.HTTP_201_CREATED)
 def create_Transaction(transaction: TransactionMasterCreate = Body(...), db: Session = Depends(get_db)):
@@ -186,6 +189,7 @@ def create_Transaction(transaction: TransactionMasterCreate = Body(...), db: Ses
                 "id": detail.id,
                 "debit": detail.debit,
                 "credit": detail.credit,
+                "description": detail.description,
                 "acc_id": detail.acc_id,
                 "description": detail.description,
                 "acc_name": detail.rsAccounts.name if detail.rsAccounts else None
@@ -223,6 +227,7 @@ def update_transaction(transaction: TransactionSchema = Body(...), db: Session =
                 "id": detail.id,
                 "debit": detail.debit,
                 "credit": detail.credit,
+                "description": detail.description,
                 "acc_id": detail.acc_id,
                 "description": detail.description,
                 "acc_name": detail.rsAccounts.name if detail.rsAccounts else None

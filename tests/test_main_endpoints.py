@@ -90,3 +90,36 @@ def test_delete_transaction_removes_it_and_its_details(client):
 
 def test_delete_transaction_unknown_id_404(client):
     assert client.delete("/transactions/9999").status_code == 404
+
+
+def test_transactions_expose_line_descriptions(client):
+    # the mobile app edits entries from this payload; a missing description would be lost on save
+    one = client.get("/transactions/1").json()
+    assert sorted(d["description"] for d in one["details"]) == ["cash in", "sale"]
+    listed = {t["id"]: t for t in client.get("/transactions/").json()}
+    assert sorted(d["description"] for d in listed[2]["details"]) == ["bank in", "sale"]
+
+
+def test_create_transaction_accepts_decimal_amounts_that_sum_equal(client):
+    # 0.1 + 0.2 != 0.3 in floating point, but this is a balanced entry
+    body = {
+        "date": "2026-04-01T00:00:00",
+        "notes": "decimals",
+        "items": [
+            {"acc_id": 2, "debit": 0.1, "credit": 0, "description": "a"},
+            {"acc_id": 3, "debit": 0.2, "credit": 0, "description": "b"},
+            {"acc_id": 6, "debit": 0, "credit": 0.3, "description": "c"},
+        ],
+    }
+    res = client.post("/transactions/", json=body)
+    assert res.status_code == 201, res.text
+
+
+def test_create_transaction_still_rejects_unbalanced(client):
+    body = {
+        "items": [
+            {"acc_id": 2, "debit": 10.00, "credit": 0, "description": "a"},
+            {"acc_id": 6, "debit": 0, "credit": 10.01, "description": "b"},
+        ],
+    }
+    assert client.post("/transactions/", json=body).status_code == 406
