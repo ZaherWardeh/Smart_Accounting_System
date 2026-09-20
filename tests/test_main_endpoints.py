@@ -123,3 +123,28 @@ def test_create_transaction_still_rejects_unbalanced(client):
         ],
     }
     assert client.post("/transactions/", json=body).status_code == 406
+
+
+def test_serve_web_off_runs_api_only(monkeypatch, seeded_db):
+    import importlib
+
+    monkeypatch.setenv("SERVE_WEB", "0")
+    api_only = importlib.reload(main)
+    try:
+        def override_get_db():
+            yield seeded_db
+
+        api_only.app.dependency_overrides[api_only.get_db] = override_get_db
+        c = TestClient(api_only.app)
+        for page in ("/", "/chat", "/static/app.css"):
+            assert c.get(page).status_code == 404, page
+        # /accounts etc. only redirect to the JSON API (trailing slash) - no HTML page anywhere
+        for page in ("/accounts", "/transactions", "/reports", "/chat"):
+            assert "text/html" not in c.get(page).headers.get("content-type", ""), page
+        # the API itself is untouched
+        assert c.get("/health").status_code == 200
+        assert c.get("/accounts/").status_code == 200
+        assert c.get("/transactions/1").status_code == 200
+    finally:
+        monkeypatch.delenv("SERVE_WEB")
+        importlib.reload(main)

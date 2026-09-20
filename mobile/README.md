@@ -46,6 +46,11 @@ flutter run
 | Real phone, backend on the server | `http://<the-static-ip>` (Nginx, port 80) |
 | Real phone, backend behind HTTPS | `https://your.domain` |
 
+**API only (no website):** start the backend with `SERVE_WEB=0` (e.g. `SERVE_WEB=0 uvicorn main:app --host 127.0.0.1 --port 8000`)
+and only the REST API is served - `/`, `/accounts` pages and `/static` return 404. Handy behind a temporary tunnel
+(`cloudflared tunnel --url http://127.0.0.1:8000`): paste the resulting `https://….trycloudflare.com` link into the app.
+There is no login, so treat the link as a secret and stop the tunnel when you're done.
+
 > The server is reached by plain IP over **HTTP**, so the app allows cleartext traffic (Android
 > `usesCleartextTraffic`, iOS ATS exception). Once you put Nginx + Certbot (HTTPS) in front, use the `https://`
 > URL and remove those two allowances. Note that voice questions travel to the server as text, and without
