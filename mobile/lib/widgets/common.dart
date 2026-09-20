@@ -140,6 +140,7 @@ class DateButton extends StatelessWidget {
     String two(int v) => v.toString().padLeft(2, '0');
     final text = value == null ? label : '${value!.year}-${two(value!.month)}-${two(value!.day)}';
     return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12)),
       icon: const Icon(Icons.event, size: 18),
       label: Text(text, overflow: TextOverflow.ellipsis),
       onPressed: () async {

@@ -280,6 +280,7 @@ class _TransactionFormPageState extends State<TransactionFormPage> {
                     Row(
                       children: [
                         Expanded(
+                          flex: 3,
                           child: DateButton(
                             label: 'التاريخ',
                             value: _date,
