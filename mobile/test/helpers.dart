@@ -60,9 +60,12 @@ class FakeVoiceService implements VoiceService {
 
   @override
   Future<void> stopListening() async {
-    // a real recogniser delivers a final result, then reports "done"
-    if (_listening && _pendingText.isNotEmpty) hear(_pendingText, isFinal: true);
+    // Android's recogniser reports "notListening" first and delivers the final
+    // result a moment later; the pending text stands in for that final result.
+    final pending = _pendingText;
+    final wasListening = _listening;
     finish();
+    if (wasListening && pending.isNotEmpty) hear(pending, isFinal: true);
   }
 
   String _pendingText = '';

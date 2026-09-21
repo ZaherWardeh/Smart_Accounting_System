@@ -33,7 +33,12 @@ Future<Harness> harness({
         asked.add((body['conversation_id'] as String, body['question'] as String));
         return jsonResponse({'answer': answer});
       });
-  return Harness(ChatController(api: api, voice: voice, settings: settings), voice, settings, asked);
+  return Harness(
+      ChatController(
+          api: api, voice: voice, settings: settings, finalResultGrace: const Duration(milliseconds: 100)),
+      voice,
+      settings,
+      asked);
 }
 
 /// Lets fire-and-forget futures (auto-speak, the send after a voice result) run.
@@ -192,11 +197,70 @@ void main() {
       await h.chat.toggleListening();
 
       h.voice.finish();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
       await settle();
 
       expect(h.chat.listening, isFalse);
       expect(h.chat.notice, contains('ما سمعت'));
       expect(h.asked, isEmpty);
+    });
+
+    test('Android order: "stopped listening" arrives BEFORE the final transcript - the last word is not lost', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.hear('شو رصيد'); // partial: the recogniser is still finishing the last word
+
+      h.voice.finish(); // engine reports it stopped listening...
+      await settle();
+      expect(h.chat.listening, isTrue); // ...but we keep waiting for the final result
+      expect(h.asked, isEmpty);
+
+      h.voice.hear('شو رصيد الصندوق', isFinal: true); // ...which arrives a moment later
+      await settle();
+      await settle();
+
+      expect(h.chat.listening, isFalse);
+      expect(h.asked.single.$2, 'شو رصيد الصندوق');
+    });
+
+    test('if the final transcript never arrives, the partial text is sent after a short grace period', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.hear('مرحبا ريما');
+
+      h.voice.finish();
+      expect(h.asked, isEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await settle();
+
+      expect(h.asked.single.$2, 'مرحبا ريما');
+    });
+
+    test('a late final transcript after the grace period does not send a second time', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.hear('مرحبا');
+      h.voice.finish();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await settle();
+
+      h.voice.hear('مرحبا ريما', isFinal: true);
+      await settle();
+
+      expect(h.asked.length, 1);
+    });
+
+    test('an engine error while waiting for the final transcript cancels the wait', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.hear('مرحبا');
+      h.voice.finish();
+      h.voice.fail('error_no_match');
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await settle();
+
+      expect(h.asked, isEmpty);
+      expect(h.chat.notice, contains('ما سمعت'));
     });
 
     test('the engine ending after a partial-only transcript still sends that text', () async {
@@ -205,7 +269,7 @@ void main() {
       h.voice.hear('مرحبا ريما');
 
       h.voice.finish();
-      await settle();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
       await settle();
 
       expect(h.asked.single.$2, 'مرحبا ريما');

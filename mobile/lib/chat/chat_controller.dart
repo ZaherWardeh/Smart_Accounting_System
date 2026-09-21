@@ -15,11 +15,15 @@ class ChatMessage {
 }
 
 class ChatController extends ChangeNotifier {
-  ChatController({required this.api, required this.voice, required this.settings});
+  ChatController({required this.api, required this.voice, required this.settings, this.finalResultGrace = const Duration(seconds: 3)});
 
   final ApiClient api;
   final VoiceService voice;
   final AppSettings settings;
+
+  /// How long to wait for the recogniser's final transcript after it reports
+  /// that it stopped listening (see [toggleListening]).
+  final Duration finalResultGrace;
 
   final List<ChatMessage> messages = [];
   bool sending = false;
@@ -33,6 +37,7 @@ class ChatController extends ChangeNotifier {
   String? notice;
 
   bool _disposed = false;
+  Timer? _finalWait;
 
   @override
   void notifyListeners() {
@@ -113,6 +118,7 @@ class ChatController extends ChangeNotifier {
     await voice.startListening(
       language: settings.speechLang,
       onResult: (text, isFinal) {
+        if (!listening) return; // a late result after we already gave up waiting
         partial = text;
         if (isFinal) {
           _finishListening(text);
@@ -122,13 +128,20 @@ class ChatController extends ChangeNotifier {
       },
       onError: (message) {
         if (!listening) return;
+        _finalWait?.cancel();
         listening = false;
         partial = '';
         notice = _friendlyError(message);
         notifyListeners();
       },
+      // "Stopped listening" does NOT mean "finished transcribing": on Android the
+      // engine reports it first and delivers the final transcript a moment later.
+      // Sending the running partial here dropped the last word, so wait for the
+      // final result and only fall back to the partial if it never comes.
       onDone: () {
-        if (listening) _finishListening(partial);
+        if (!listening) return;
+        _finalWait?.cancel();
+        _finalWait = Timer(finalResultGrace, () => _finishListening(partial));
       },
     );
   }
@@ -143,6 +156,7 @@ class ChatController extends ChangeNotifier {
 
   void _finishListening(String text) {
     if (!listening) return; // the final result and the "done" status both land here
+    _finalWait?.cancel();
     listening = false;
     partial = '';
     final heard = text.trim();
@@ -163,6 +177,7 @@ class ChatController extends ChangeNotifier {
   Future<void> newConversation() async {
     await _stopSpeakingQuietly();
     if (listening) {
+      _finalWait?.cancel();
       listening = false;
       partial = '';
       try {
@@ -178,6 +193,7 @@ class ChatController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _finalWait?.cancel();
     unawaited(voice.stopSpeaking());
     unawaited(voice.stopListening());
     super.dispose();
