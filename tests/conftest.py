@@ -1,3 +1,4 @@
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -6,6 +7,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Importing `main` builds/migrates the default engine. Point it at a throwaway in-memory
+# database BEFORE anything imports it, so running the tests can never touch accounting.db.
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -72,4 +77,51 @@ def seeded_db(db_session):
     add_txn(2, "2026-02-15", "Bank sale", [(3, 500, 0, "bank in"), (6, 0, 500, "sale")])
     add_txn(3, "2026-03-01", "Paid expense", [(7, 200, 0, "expense"), (2, 0, 200, "cash out")])
 
+    return db_session
+
+
+@pytest.fixture()
+def coded_db(db_session):
+    """A chart shaped like the real one: 3-digit roots, +2 digits per level.
+
+    001 الموجودات (BS, master)
+      00101 موجودات ثابتة (book)
+      00102 موجودات متداولة (master)
+        0010201 الصندوق (book)
+        0010202 البنك (book)
+    002 المصاريف (P&L, master)
+      00201 إيجارات (book)
+      00202 رواتب (book)
+    003 المبيعات (P&L, master)
+      00301 مبيعات نقدية (book)
+    004 حساب فارغ (BS, book leaf, no postings)
+    """
+    rows = [
+        (1, "001", "الموجودات", 0, None),
+        (2, "00101", "موجودات ثابتة", 0, 1),
+        (3, "00102", "موجودات متداولة", 0, 1),
+        (4, "0010201", "الصندوق", 0, 3),
+        (5, "0010202", "البنك", 0, 3),
+        (6, "002", "المصاريف", 1, None),
+        (7, "00201", "إيجارات", 1, 6),
+        (8, "00202", "رواتب", 1, 6),
+        (9, "003", "المبيعات", 1, None),
+        (10, "00301", "مبيعات نقدية", 1, 9),
+        (11, "004", "حساب فارغ", 0, None),
+    ]
+    db_session.add_all([Accounts(id=i, code=c, name=n, closeIn=ci, parentAccount=p) for i, c, n, ci, p in rows])
+    db_session.commit()
+
+    def post(txn_id, day, debit_acc, credit_acc, amount):
+        m = TransactionsMaster(id=txn_id, date=datetime(2026, 1, day), notes="seed")
+        db_session.add(m)
+        db_session.flush()
+        db_session.add(TransactionsDetail(idMaster=txn_id, acc_id=debit_acc, debit=amount, credit=0, description="seed"))
+        db_session.add(TransactionsDetail(idMaster=txn_id, acc_id=credit_acc, debit=0, credit=amount, description="seed"))
+        db_session.commit()
+
+    post(1, 1, 7, 4, 500)   # rent paid from the cash box
+    post(2, 2, 7, 4, 500)
+    post(3, 3, 8, 5, 900)   # salaries from the bank
+    post(4, 4, 4, 10, 300)  # cash sale
     return db_session

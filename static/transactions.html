@@ -131,6 +131,7 @@
         <td>${fmt(sumOf(tx, 'debit'))}</td>
         <td>${fmt(sumOf(tx, 'credit'))}</td>
         <td class="row-actions">
+          ${tx.has_document ? `<a class="btn btn-sm" href="/transactions/${tx.id}/document" target="_blank" rel="noopener" title="عرض المستند المرفق">📎 المستند</a>` : ''}
           <button class="btn btn-sm" onclick="openEdit(${tx.id})">تعديل</button>
           <button class="btn btn-sm btn-danger" onclick="deleteTx(${tx.id})">حذف</button>
         </td>

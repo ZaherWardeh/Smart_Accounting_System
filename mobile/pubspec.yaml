@@ -44,6 +44,7 @@ dependencies:
   intl: ^0.19.0
   flutter_localizations:
     sdk: flutter
+  image_picker: 1.1.2
 
 dev_dependencies:
   flutter_test:
@@ -65,6 +66,9 @@ dev_dependencies:
 # SharedPreferences implementation. Remove once Flutter is upgraded.
 dependency_overrides:
   shared_preferences_android: 2.3.4
+  # image_picker pulls in a flutter_plugin_android_lifecycle that requires compileSdk 35,
+  # which this old AGP/aapt2 toolchain can't parse. Pin the last version that only needs 33.
+  flutter_plugin_android_lifecycle: 2.0.14
 
 flutter:
 

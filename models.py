@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, CheckConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, CheckConstraint, LargeBinary, Text, UniqueConstraint
+from sqlalchemy.orm import relationship, deferred
 from database import Base
 from datetime import datetime
 
@@ -28,6 +28,12 @@ class TransactionsMaster(Base):
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime, nullable=False, default=datetime.utcnow)
     notes = Column(String)
+    # Source document (e.g. a scanned bill) saved with the entry. The bytes are
+    # deferred so listing transactions never loads the images; document_mime is
+    # the cheap "has a document" marker.
+    document = deferred(Column(LargeBinary, nullable=True))
+    document_mime = Column(String, nullable=True)
+    document_name = Column(String, nullable=True)
 
     rsTransactionsMaster = relationship(
         "TransactionsDetail",
@@ -47,3 +53,35 @@ class TransactionsDetail(Base):
 
     rsAccounts = relationship("Accounts", back_populates="rsTransactions")
     rsTransactionsMaster = relationship("TransactionsMaster", back_populates="rsTransactionsMaster", foreign_keys=[idMaster])
+
+
+class RimaDraft(Base):
+    """An operation Rima is collecting from the user (a transaction or a new
+    account) that hasn't been saved yet. Lives in the DB, not memory, so an
+    unanswered draft survives a restart and is never silently dropped."""
+    __tablename__ = "RimaDrafts"
+    __table_args__ = (UniqueConstraint("conversation_id", "kind", name="uq_rima_draft_conversation_kind"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(String, nullable=False, index=True)
+    kind = Column(String, nullable=False)  # "transaction" | "account"
+    payload = Column(Text, nullable=False, default="{}")  # JSON
+    status = Column(String, nullable=False, default="collecting")  # collecting | awaiting_confirmation
+    confirm_request_id = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RimaAttachment(Base):
+    """A document image the user sent to Rima, waiting to be saved with a
+    transaction (or discarded)."""
+    __tablename__ = "RimaAttachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(String, nullable=False, index=True)
+    mime = Column(String, nullable=False)
+    filename = Column(String, nullable=True)
+    data = deferred(Column(LargeBinary, nullable=False))
+    facts = Column(Text, nullable=False, default="{}")  # JSON extracted by the vision call
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+

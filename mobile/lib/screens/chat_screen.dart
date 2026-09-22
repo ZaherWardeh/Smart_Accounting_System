@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../chat/attachment_picker.dart';
 import '../chat/chat_controller.dart';
 import '../core/api_client.dart';
 import '../core/settings.dart';
@@ -28,7 +29,10 @@ class _ChatScreenState extends State<ChatScreen> {
       api: context.read<ApiClient>(),
       voice: context.read<VoiceService>(),
       settings: context.read<AppSettings>(),
+      picker: context.read<AttachmentPicker>(),
     )..addListener(_onChat);
+    // an operation left unsaved earlier (even before an app restart) is shown again
+    _chat.refreshPending();
   }
 
   void _onChat() {
@@ -65,9 +69,31 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _send() {
     final text = _input.text;
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty && _chat.attachment == null) return;
     _input.clear();
     _chat.send(text);
+  }
+
+  /// Unsaved operations belong to the conversation being left, so ask first.
+  Future<void> _newConversation() async {
+    if (_chat.pending.isEmpty) {
+      await _chat.newConversation();
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('عندك عملية غير محفوظة'),
+        content: Text(
+          '${_chat.pending.map((p) => p.summaryAr).join('\n')}\n\nبدء محادثة جديدة رح يلغي هذه العملية.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('رجوع')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('إلغاء العملية وبدء محادثة جديدة')),
+        ],
+      ),
+    );
+    if (discard == true) await _chat.newConversation(discardPending: true);
   }
 
   @override
@@ -96,7 +122,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (muting) chat.stopSpeaking(); // muting also cuts off whatever's being read now
                   },
                 ),
-                IconButton(tooltip: 'محادثة جديدة', icon: const Icon(Icons.add_comment_outlined), onPressed: chat.newConversation),
+                IconButton(tooltip: 'محادثة جديدة', icon: const Icon(Icons.add_comment_outlined), onPressed: _newConversation),
                 IconButton(tooltip: 'الإعدادات', icon: const Icon(Icons.settings), onPressed: () => openSettings(context)),
               ],
             ),
@@ -106,6 +132,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (chat.notice != null) _noticeBar(context, chat),
                 if (chat.speaking) _speakingBar(context, chat),
                 if (chat.listening) _listeningBar(context, chat),
+                if (chat.pending.isNotEmpty) _PendingCard(chat: chat),
+                if (chat.attachment != null) _attachmentPreview(context, chat),
                 _composer(context, chat),
               ],
             ),
@@ -126,7 +154,9 @@ class _ChatScreenState extends State<ChatScreen> {
               Icon(Icons.record_voice_over, size: 56, color: Theme.of(context).colorScheme.primary),
               const SizedBox(height: 12),
               const Text(
-                'اسأل ريما عن دليل الحسابات، حركة أي حساب، أو رصيده.\nاكتب سؤالك، أو اضغط على الميكروفون وتحدّث — وريما بتجاوبك بصوتها.',
+                'اسأل ريما عن دليل الحسابات، حركة أي حساب، أو رصيده.\n'
+                'اكتب سؤالك، أو اضغط على الميكروفون وتحدّث — وريما بتجاوبك بصوتها.\n'
+                'وتقدر تطلب منها تسجيل قيد، أو تضيف صورة فاتورة 📎 لتقرأها وتقترح الحسابات.',
                 textAlign: TextAlign.center,
               ),
             ],
@@ -154,6 +184,14 @@ class _ChatScreenState extends State<ChatScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (m.imageBytes != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(m.imageBytes!, height: 140, fit: BoxFit.cover, key: const Key('message-image')),
+                  ),
+                ),
               SelectableText(m.text, style: TextStyle(color: fg, height: 1.5)),
               if (!m.fromUser && !m.isError)
                 Align(
@@ -213,6 +251,23 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
 
+  Widget _attachmentPreview(BuildContext context, ChatController chat) {
+    final att = chat.attachment!;
+    return Container(
+      key: const Key('attachment-preview'),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.memory(att.bytes, width: 48, height: 48, fit: BoxFit.cover)),
+          const SizedBox(width: 10),
+          Expanded(child: Text(att.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          IconButton(tooltip: 'إزالة المرفق', icon: const Icon(Icons.close), onPressed: chat.clearAttachment),
+        ],
+      ),
+    );
+  }
+
   Widget _composer(BuildContext context, ChatController chat) {
     final scheme = Theme.of(context).colorScheme;
     return SafeArea(
@@ -222,6 +277,11 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              tooltip: 'إرفاق صورة مستند',
+              onPressed: chat.sending ? null : chat.pickAttachment,
+              icon: const Icon(Icons.attach_file),
+            ),
             Expanded(
               child: TextField(
                 controller: _input,
@@ -229,8 +289,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _send(),
+                onChanged: (_) => chat.userActivity(),
                 decoration: InputDecoration(
-                  hintText: 'اكتب سؤالك هون...',
+                  hintText: chat.attachment == null ? 'اكتب سؤالك هون...' : 'أضف تعليقاً على المستند (اختياري)',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   isDense: true,
@@ -250,6 +311,75 @@ class _ChatScreenState extends State<ChatScreen> {
               onPressed: chat.sending ? null : chat.toggleListening,
               icon: Icon(chat.listening ? Icons.stop : Icons.mic),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Unsaved operations Rima is collecting, with the three things the user can
+/// do about them. It turns into an alert (and Rima says it aloud) after the
+/// user has been silent for a while.
+class _PendingCard extends StatelessWidget {
+  const _PendingCard({required this.chat});
+
+  final ChatController chat;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final alert = chat.pendingAlert;
+    return Card(
+      key: const Key('pending-card'),
+      margin: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+      color: alert ? scheme.errorContainer : scheme.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(alert ? Icons.notification_important : Icons.pending_actions, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    alert ? 'لسا عندك عملية غير محفوظة!' : 'عملية غير محفوظة',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            for (final p in chat.pending) ...[
+              const SizedBox(height: 6),
+              Text(p.summaryAr),
+              Text(
+                p.readyToConfirm ? 'جاهزة للتأكيد' : 'ناقص: ${p.nextStepLabelAr}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  if (p.readyToConfirm)
+                    FilledButton.tonal(
+                      key: Key('confirm-${p.kind}'),
+                      onPressed: chat.sending ? null : () => chat.confirmPending(p.kind),
+                      child: const Text('تأكيد'),
+                    ),
+                  OutlinedButton(
+                    key: Key('modify-${p.kind}'),
+                    onPressed: chat.sending ? null : chat.modifyPending,
+                    child: Text(p.readyToConfirm ? 'تعديل' : 'متابعة'),
+                  ),
+                  TextButton(
+                    key: Key('cancel-${p.kind}'),
+                    onPressed: chat.sending ? null : () => chat.cancelPending(p.kind),
+                    child: Text('إلغاء', style: TextStyle(color: scheme.error)),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

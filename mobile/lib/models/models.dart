@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 double _num(dynamic v) => v == null ? 0 : (v as num).toDouble();
 
 DateTime? _date(dynamic v) => v is String ? DateTime.tryParse(v) : null;
@@ -102,12 +104,15 @@ class TxLine {
 }
 
 class Transaction {
-  const Transaction({required this.id, this.date, this.notes, required this.lines});
+  const Transaction({required this.id, this.date, this.notes, required this.lines, this.hasDocument = false});
 
   final int id;
   final DateTime? date;
   final String? notes;
   final List<TxLine> lines;
+
+  /// A source document (image) is saved with this entry; fetch it with ApiClient.transactionDocument.
+  final bool hasDocument;
 
   double get totalDebit => lines.fold(0.0, (s, l) => s + l.debit);
   double get totalCredit => lines.fold(0.0, (s, l) => s + l.credit);
@@ -119,6 +124,7 @@ class Transaction {
       date: _date(j['date']),
       notes: j['notes'] as String?,
       lines: raw.map((e) => TxLine.fromJson(e as Map<String, dynamic>)).toList(),
+      hasDocument: j['has_document'] == true,
     );
   }
 }
@@ -234,3 +240,97 @@ class BalanceResult {
             .toList(),
       );
 }
+
+// ---- Rima: attachments and unsaved operations --------------------------------
+
+/// An image the user picked to send with a message (a bill, receipt...).
+class RimaAttachment {
+  const RimaAttachment({required this.bytes, required this.name});
+
+  final Uint8List bytes;
+  final String name;
+}
+
+const _stepLabelsAr = {
+  'debit_account': 'حساب المدين',
+  'credit_account': 'حساب الدائن',
+  'amount': 'المبلغ',
+  'confirmation': 'التأكيد',
+  'name': 'اسم الحساب',
+  'parent_account': 'الحساب الأب',
+  'close_in': 'نوع الإغلاق',
+  'code': 'رمز الحساب',
+};
+
+/// An operation Rima is still collecting (a transaction or a new account) that
+/// hasn't been saved. The server owns the draft; this is just a view of it.
+class PendingDraft {
+  const PendingDraft({
+    required this.kind,
+    required this.status,
+    required this.nextStep,
+    required this.readyToConfirm,
+    required this.draft,
+  });
+
+  final String kind; // 'transaction' | 'account'
+  final String status; // 'collecting' | 'awaiting_confirmation'
+  final String nextStep;
+  final bool readyToConfirm;
+  final Map<String, dynamic> draft;
+
+  bool get isTransaction => kind == 'transaction';
+
+  String get nextStepLabelAr => _stepLabelsAr[nextStep] ?? nextStep;
+
+  factory PendingDraft.fromJson(Map<String, dynamic> j) => PendingDraft(
+        kind: (j['kind'] as String?) ?? 'transaction',
+        status: (j['status'] as String?) ?? 'collecting',
+        nextStep: (j['next_step'] as String?) ?? '',
+        readyToConfirm: j['ready_to_confirm'] == true,
+        draft: (j['draft'] as Map?)?.cast<String, dynamic>() ?? const {},
+      );
+
+  static String _acc(dynamic a) {
+    if (a is! Map) return '—';
+    final code = a['code'];
+    return '${code == null || '$code'.isEmpty ? '' : '$code - '}${a['name']}';
+  }
+
+  /// One short line describing the draft, for the alert card.
+  String get summaryAr {
+    if (isTransaction) {
+      final amount = draft['amount'];
+      return 'قيد: مدين ${_acc(draft['debit_account'])} / دائن ${_acc(draft['credit_account'])}'
+          '${amount == null ? '' : ' بمبلغ $amount'}';
+    }
+    final parent = draft['parent_account'];
+    final name = draft['name'];
+    return 'حساب جديد: ${name ?? '—'}${parent is Map ? ' تحت ${_acc(parent)}' : ''}';
+  }
+}
+
+/// Rima's answer plus any operations still waiting for the user.
+class RimaReply {
+  const RimaReply({required this.answer, this.pendingDrafts = const []});
+
+  final String answer;
+  final List<PendingDraft> pendingDrafts;
+
+  factory RimaReply.fromJson(Map<String, dynamic> j) => RimaReply(
+        answer: (j['answer'] as String?) ?? '',
+        pendingDrafts: parsePendingDrafts(j['pending_drafts']),
+      );
+}
+
+List<PendingDraft> parsePendingDrafts(dynamic raw) =>
+    raw is List ? raw.whereType<Map>().map((e) => PendingDraft.fromJson(e.cast<String, dynamic>())).toList() : const [];
+
+/// Result of pressing Confirm on a pending draft.
+class DraftConfirmation {
+  const DraftConfirmation({required this.messageAr, required this.pendingDrafts});
+
+  final String messageAr;
+  final List<PendingDraft> pendingDrafts;
+}
+

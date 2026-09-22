@@ -56,5 +56,7 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Rima reads the bill photos you choose, to suggest the accounts and to save them with the entry.</string>
 </dict>
 </plist>

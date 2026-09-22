@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -97,6 +98,14 @@ class ApiClient {
       if (decoded is Map && decoded['detail'] != null) {
         final detail = decoded['detail'];
         if (detail is String) return detail;
+        if (detail is Map) {
+          const draftErrors = {
+            'incomplete': 'العملية غير مكتملة بعد، أكمل المعلومات الناقصة أولاً',
+            'no_draft': 'ما في عملية معلّقة',
+            'invalid_draft': 'بيانات العملية لم تعد صالحة، راجعها مع ريما',
+          };
+          return draftErrors[detail['error']] ?? (detail['message'] as String?) ?? 'تعذر تنفيذ الطلب';
+        }
         if (detail is List) {
           final msgs = detail.map((e) => e is Map ? e['msg'] : e).whereType<Object>();
           if (msgs.isNotEmpty) return msgs.join('، ');
@@ -181,13 +190,61 @@ class ApiClient {
 
   // ---- Rima -------------------------------------------------------------
 
-  Future<String> askRima(String conversationId, String question) async {
+  Future<String> askRima(String conversationId, String question) async =>
+      (await askRimaFull(conversationId, question)).answer;
+
+  /// Like [askRima] but also returns the unsaved operations still open in the
+  /// conversation, and can send a document image along with the question.
+  Future<RimaReply> askRimaFull(String conversationId, String question, {RimaAttachment? attachment}) async {
     final data = await _send(
       'POST',
       '/reports/ask_ai',
-      body: {'conversation_id': conversationId, 'question': question},
-      timeout: const Duration(seconds: 120), // the agent may make several Gemini round trips
+      body: {
+        'conversation_id': conversationId,
+        'question': question,
+        if (attachment != null) 'attachment': {'data_base64': base64Encode(attachment.bytes), 'filename': attachment.name},
+      },
+      timeout: const Duration(seconds: 180), // several Gemini round trips, plus reading an image
     ) as Map<String, dynamic>;
-    return (data['answer'] as String?) ?? '';
+    return RimaReply.fromJson(data);
+  }
+
+  // ---- unsaved operations (drafts) ----------------------------------------
+
+  Future<List<PendingDraft>> pendingDrafts(String conversationId) async =>
+      parsePendingDrafts(await _send('GET', '/drafts/$conversationId'));
+
+  /// A real "confirm" press: the server saves exactly what the draft says.
+  Future<DraftConfirmation> confirmDraft(String conversationId, String kind) async {
+    final data = await _send('POST', '/drafts/$conversationId/$kind/confirm') as Map<String, dynamic>;
+    final String message;
+    if (kind == 'transaction') {
+      message = 'تم حفظ القيد رقم ${data['transaction_id']}.';
+    } else {
+      final a = (data['account'] as Map?) ?? const {};
+      message = 'تم إنشاء الحساب ${a['code'] == null ? '' : '${a['code']} - '}${a['name'] ?? ''}.';
+    }
+    return DraftConfirmation(messageAr: message, pendingDrafts: parsePendingDrafts(data['pending_drafts']));
+  }
+
+  Future<List<PendingDraft>> cancelDraft(String conversationId, String kind) async {
+    final data = await _send('POST', '/drafts/$conversationId/$kind/cancel') as Map<String, dynamic>;
+    return parsePendingDrafts(data['pending_drafts']);
+  }
+
+  // ---- documents saved with entries ---------------------------------------
+
+  Future<Uint8List> transactionDocument(int transactionId) async {
+    final uri = _uri('/transactions/$transactionId/document');
+    http.Response res;
+    try {
+      res = await _http.get(uri).timeout(const Duration(seconds: 60));
+    } on TimeoutException {
+      throw ApiException('انتهت مهلة الاتصال بالخادم', isConnection: true);
+    } catch (_) {
+      throw ApiException('تعذر الاتصال بالخادم. تأكد من العنوان وأن الخادم شغّال', isConnection: true);
+    }
+    if (res.statusCode == 200) return res.bodyBytes;
+    throw ApiException(res.statusCode == 404 ? 'ما في مستند مرفق بهذا القيد' : _errorMessage(res), status: res.statusCode);
   }
 }

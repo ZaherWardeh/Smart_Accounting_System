@@ -100,7 +100,10 @@ directly too if you want (Swagger UI at `/docs`).
 | `GET /reports/chart-of-accounts` | Every account with a derived `account_type` (`master`/`book`) and labeled `closeIn`. |
 | `GET /reports/statement/{acc_id}?date_from=&date_to=` | Statement of account — a master account rolls up its descendants. |
 | `GET /reports/balance?acc_ids=1&acc_ids=2&as_of_date=&date_from=&date_to=` | Balance for one or more accounts, combined + per-account breakdown. |
-| `POST /reports/ask_ai` | Ask Rima — see below. |
+| `POST /reports/ask_ai` | Ask Rima — see below. Can also carry an `attachment` (a document image); reply includes `pending_drafts`. |
+| `GET /drafts/{conversation_id}` | Unsaved operations (entry/new-account drafts) Rima is still collecting for that conversation. |
+| `POST /drafts/{conversation_id}/{kind}/confirm`, `.../cancel` | A real button press: save the draft exactly as it stands, or discard it. `kind` is `transaction` or `account`. |
+| `GET /transactions/{id}/document` | The source document image saved with an entry, if any (see `has_document` on the transaction). |
 | `GET /health` | `{"status": "ok", "llm_connected": bool}` — used by the tray launcher. |
 
 ### Request flow (Rima)
@@ -126,6 +129,56 @@ classification step forcing the branch.
 
 No LLM-generated code is ever `exec()`'d (the old pipeline's two `exec()`
 calls are gone, and stay gone).
+
+### Recording a transaction or a new account through Rima
+
+Rima can also *write* — record a journal entry, or create a new account for one
+— but she never writes directly. She can only propose fields to a **draft**
+that the **server** validates, orders and gates; the model just phrases the
+conversation. This is deliberate: an LLM told "ask for whatever's missing" will
+occasionally invent an account or skip a question, so the required-field order,
+every validation rule and the save-only-after-confirmation gate all live in
+`drafts.py`, not in the prompt.
+
+- **Transaction** (one debit line, one credit line, one amount): required
+  fields are asked **in a fixed order** — debit account, then credit account,
+  then amount — each with server-ranked suggestions (`update_transaction_draft`
+  returns `next_step` and `suggestions`; the model must ask only about
+  `next_step`). Date defaults to today (or the attached document's date).
+- **New account**: required fields, also in order — name, parent account
+  (never a top-level account), and where it closes (Balance Sheet / P&L /
+  Trading). The **code defaults to the parent's code + the next two digits**
+  (`next_child_code` in `drafts.py`, following the scheme described below);
+  the user can accept it or give another valid one. The account is always
+  created as a detail (book) account.
+- **Confirmation gate**: once a draft is complete its status becomes
+  `awaiting_confirmation`. `commit_transaction`/`commit_account` refuse in the
+  *same* request that completed the draft — the model must read the draft
+  back and get an actual later message (or a UI button press) before it can
+  save. Any further `update_*` call re-opens confirmation.
+- **Unsaved operations are never silently dropped.** A draft lives in the
+  `RimaDrafts` table (not memory), so it survives a server restart. Every
+  `/reports/ask_ai` reply lists open drafts in `pending_drafts`, and the system
+  prompt is handed a block each turn instructing Rima to remind the user (after
+  answering whatever they actually asked) that they can **confirm, modify, or
+  abort**. The mobile app and website also poll `GET /drafts/{id}` when the
+  chat opens and show the same three actions as buttons, so a user never has
+  to get the model to cooperate just to get rid of a stuck draft.
+- **Source documents**: an image (a bill, a receipt) can be sent with the
+  question. It's read once by a separate, tool-less Gemini vision call
+  (`documents.extract_document_facts`) with a fixed JSON schema — so text
+  printed on the document can't act as instructions, only as data. Suggested
+  accounts are ranked **document first, then the user's words, then history**;
+  a document's total/date are only ever *proposed*, never silently filled in.
+  The image is kept in `RimaAttachments` until an entry is confirmed, then
+  moved onto that transaction's own `document`/`document_mime`/`document_name`
+  columns (and discarded on cancel). `GET /transactions/{id}/document` serves
+  it back; list endpoints only send `has_document`, never the bytes
+  (`document` is a deferred column).
+- If the model's own call fails *after* a write already went through (e.g. a
+  quota error while composing the reply), the user still gets told what was
+  saved — `agent_loop` catches that case and answers from the tool's own
+  result, not from the model.
 
 ### Conversation memory
 
@@ -157,8 +210,10 @@ Two things worth knowing about this:
 
 | File | Role |
 | --- | --- |
-| `tools.py` | The three domain tools (`get_chart_of_accounts`, `get_account_transactions`, `get_account_balance`), plain functions against the DB — no LLM. |
-| `graph.py` | The Gemini client setup, `AgentState`, the single `agent_loop` node and its tool-calling loop, the conversation-history store. `run_agent(db, conversation_id, question)` is the entry point `main.py` calls. |
+| `tools.py` | The three read-only domain tools (`get_chart_of_accounts`, `get_account_transactions`, `get_account_balance`), plain functions against the DB — no LLM. |
+| `drafts.py` | The governed write path: transaction/account drafts, validation, the account-code generator, the suggestion ranker, and the 6 write tools Rima calls (`update_transaction_draft`, `commit_transaction`, `cancel_transaction_draft`, `update_account_draft`, `commit_account`, `cancel_account_draft`). |
+| `documents.py` | Source-document images: decoding/validating an upload, the tool-less vision extraction call, and storage helpers (`RimaAttachments`, stale-upload cleanup). |
+| `graph.py` | The Gemini client setup, `AgentState`, the single `agent_loop` node and its tool-calling loop, the conversation-history store. `run_agent(db, conversation_id, question, attachment=None)` is the entry point `main.py` calls. |
 | `reports.py` | `get_financial_summary`, used by `/reports/summery` — the only other place in the app that touches transaction data outside the AI path. |
 | `models.py` / `schemas.py` / `database.py` | SQLAlchemy models, Pydantic schemas, SQLite session setup — unchanged in shape by this migration except the Pydantic v2 fixes below. |
 | `static/*.html` / `static/app.css` | The built-in website — dashboard, accounts, transactions, reports, and the Rima chat UI — see the table above. |
@@ -222,6 +277,14 @@ kept for reference if you're migrating your own pre-existing database; a
 fresh/empty database gets the `code` column for free from
 `Base.metadata.create_all()`.
 
+When Rima creates a new account, `drafts.next_child_code` computes the
+default the same way: the highest existing code among that parent's direct
+children, plus one, zero-padded to two digits (or `parent_code + "01"` if it
+has no children yet). If the 99 slots under a parent are full it reuses the
+lowest free one, and if none are free (or the parent itself has no code) no
+default is offered — the user has to pick a different parent or type a
+code by hand.
+
 ## Known limitations
 
 - **Name collisions**: if a name matches more than one account, `agent_loop`
@@ -274,3 +337,27 @@ fresh/empty database gets the `code` column for free from
   `tests/conftest.py`'s `db_session` fixture — `TestClient` runs sync route
   handlers in a worker thread, and plain in-memory SQLite otherwise hands
   each thread a separate, empty database.
+- `tests/test_rima_drafts.py` — `drafts.py` directly, against a chart shaped
+  like the real hierarchical one: required-field order for both the
+  transaction and account flows, every validation rule, the account-code
+  generator (including the 99-slot overflow and no-code-parent cases),
+  the confirmation gate (same-request commit refused, a later one allowed,
+  an edit re-opening it), a new account auto-filling the debit/credit slot
+  of a transaction mid-flow, and the document-attachment behaviour
+  (suggestion priority, the proposed-not-filled amount, byte-for-byte
+  storage on commit, discard on cancel).
+- `tests/test_rima_e2e.py` — the same flows through the full `agent_loop`
+  with a scripted Gemini client: proves the *server*, not the model, is what
+  enforces the rules (an early `commit_transaction` call is refused, smuggled
+  arguments like a different `conversation_id` are rejected, a hostile
+  instruction embedded in a document's text has no tools to act on), plus the
+  pending-drafts reminder block appearing in the system prompt and the
+  fallback that reports a successful save even if the model's own next call
+  then fails (e.g. a quota error).
+- `tests/test_rima_api.py` — the HTTP layer: attachment decoding/validation
+  (real image bytes required, size cap, declared MIME type never trusted),
+  the `/drafts` routes (list/confirm/cancel, refusing an incomplete or
+  missing draft), the document endpoints (round-trips the saved image,
+  `has_document` without shipping the bytes), and the legacy-database
+  migration (`database.ensure_columns`) against a temp SQLite file built with
+  the pre-Rima schema.

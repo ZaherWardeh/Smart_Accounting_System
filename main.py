@@ -2,21 +2,29 @@ import os
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, status, HTTPException, Body, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload
-from database import sessionLocal, engine, Base
+from database import sessionLocal, engine, Base, ensure_columns
 from models import Accounts, TransactionsMaster, TransactionsDetail
 from schemas import AccountCreate, AccountOut, TransactionMasterCreate, TransactionSchema, AskAIRequest, AskAIResponse
 from datetime import datetime
 from reports import get_financial_summary
 from tools import get_chart_of_accounts, get_account_transactions, get_account_balance
-from graph import run_agent, is_llm_connected
+from graph import run_agent, is_llm_connected, conversation_lock, record_event
+from drafts import KIND_ACCOUNT, KIND_TRANSACTION, cancel_draft, confirm_draft, list_pending_drafts
+import documents
 
 app = FastAPI()
 
 # إنشاء الجداول في قاعدة البيانات
+ensure_columns()  # add columns introduced after the first release to older databases
 Base.metadata.create_all(bind=engine)
+with sessionLocal() as _startup_db:
+    try:
+        documents.cleanup_stale_attachments(_startup_db)  # uploads nobody used within a week
+    except Exception as _e:  # housekeeping must never stop the server from starting
+        print(f"Attachment cleanup skipped: {_e}")
 
 # The built-in website is optional: SERVE_WEB=0 runs the REST API only (e.g. when the
 # only client is the mobile app and the backend is exposed through a tunnel).
@@ -122,6 +130,7 @@ def get_transactions(db: Session = Depends(get_db)):
             "id": transaction.id,
             "date": transaction.date,
             "notes": transaction.notes,
+            "has_document": transaction.document_mime is not None,
             "details": [
                 {
                     "id": detail.id,
@@ -147,6 +156,7 @@ def get_transaction(id: int, db: Session = Depends(get_db)):
         "id": transaction.id,
         "date": transaction.date,
         "notes": transaction.notes,
+        "has_document": transaction.document_mime is not None,
         "details": [
             {
                 "id": detail.id,
@@ -158,6 +168,19 @@ def get_transaction(id: int, db: Session = Depends(get_db)):
             } for detail in transaction.rsTransactionsMaster
         ]
     }
+
+@app.get("/transactions/{id}/document")
+def get_transaction_document(id: int, db: Session = Depends(get_db)):
+    """The source document (image) saved with an entry."""
+    transaction = db.query(TransactionsMaster).filter(TransactionsMaster.id == id).first()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction.document_mime is None or not transaction.document:
+        raise HTTPException(status_code=404, detail="This transaction has no document")
+    headers = {"Cache-Control": "private, max-age=3600"}
+    if transaction.document_name:
+        headers["Content-Disposition"] = f'inline; filename="{transaction.document_name}"'
+    return Response(content=transaction.document, media_type=transaction.document_mime, headers=headers)
 
 def CheckBalance(transaction: TransactionMasterCreate) -> bool:
     total_debits = 0
@@ -283,4 +306,57 @@ def get_balance_report(
 
 @app.post("/reports/ask_ai", response_model=AskAIResponse)
 def ask_ai(request: AskAIRequest = Body(...), db: Session = Depends(get_db)):
-    return AskAIResponse(answer=run_agent(db, request.conversation_id, request.question))
+    attachment = None
+    if request.attachment is not None:
+        try:
+            mime, data = documents.decode_attachment(request.attachment.data_base64, request.attachment.mime)
+        except documents.AttachmentError as e:
+            code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if "too large" in str(e) else status.HTTP_400_BAD_REQUEST
+            raise HTTPException(status_code=code, detail=str(e))
+        attachment = {"mime": mime, "data": data, "filename": request.attachment.filename}
+    answer = run_agent(db, request.conversation_id, request.question, attachment)
+    return AskAIResponse(answer=answer, pending_drafts=list_pending_drafts(db, request.conversation_id))
+
+
+# ---- unsaved operations Rima is collecting (transaction / account drafts) ----
+# Deterministic counterparts of "yes, save it" / "cancel it": a real button press
+# from the app or website, not the model interpreting a sentence.
+
+def _draft_kind(kind: str) -> str:
+    if kind not in (KIND_TRANSACTION, KIND_ACCOUNT):
+        raise HTTPException(status_code=404, detail="Unknown draft type")
+    return kind
+
+
+@app.get("/drafts/{conversation_id}")
+def get_drafts(conversation_id: str, db: Session = Depends(get_db)):
+    return list_pending_drafts(db, conversation_id)
+
+
+@app.post("/drafts/{conversation_id}/{kind}/confirm")
+def confirm_pending_draft(conversation_id: str, kind: str, db: Session = Depends(get_db)):
+    kind = _draft_kind(kind)
+    with conversation_lock(conversation_id):
+        result = confirm_draft(db, conversation_id, kind)
+        if result.get("ok"):
+            what = (
+                f"entry #{result['transaction_id']} was saved" if kind == KIND_TRANSACTION
+                else f"account {result['account']['code'] or ''} {result['account']['name']} was created"
+            )
+            record_event(conversation_id, f"the user pressed Confirm and the {what}; that draft is finished")
+    if not result.get("ok"):
+        code = {"no_draft": 404, "incomplete": 409}.get(result.get("error"), 422)
+        raise HTTPException(status_code=code, detail=result)
+    result["pending_drafts"] = list_pending_drafts(db, conversation_id)
+    return result
+
+
+@app.post("/drafts/{conversation_id}/{kind}/cancel")
+def cancel_pending_draft(conversation_id: str, kind: str, db: Session = Depends(get_db)):
+    kind = _draft_kind(kind)
+    with conversation_lock(conversation_id):
+        result = cancel_draft(db, conversation_id, kind)
+        if result.get("cancelled"):
+            record_event(conversation_id, f"the user pressed Abort and the {kind} draft was discarded")
+    result["pending_drafts"] = list_pending_drafts(db, conversation_id)
+    return result

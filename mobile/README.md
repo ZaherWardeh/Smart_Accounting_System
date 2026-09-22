@@ -3,8 +3,7 @@
 A phone version of the Smart Accounting website: dashboard, chart of accounts (tree), journal entries,
 reports, and **Rima** — who you can talk to, and who talks back.
 
-It is a thin client over the existing REST API. **The backend is unchanged** — no new endpoints, no extra
-API cost: speech-to-text and text-to-speech run on the phone itself.
+It is a thin client over the existing REST API. Speech-to-text and text-to-speech run on the phone itself.
 
 ## Screens
 
@@ -12,12 +11,28 @@ API cost: speech-to-text and text-to-speech run on the phone itself.
 | --- | --- |
 | الرئيسية | Income / expense / balance summary, shortcuts. Pull to refresh. |
 | الحسابات | Chart of accounts as a collapsible tree in code order; add / edit / delete (409 from the server is shown as a message). |
-| القيود | Journal entries, newest first; add / edit with live balance check (save is disabled until debits = credits); delete. |
+| القيود | Journal entries, newest first; add / edit with live balance check (save is disabled until debits = credits); delete; a 📎 on an entry with a saved document opens a zoomable viewer. |
 | التقارير | Statement of account (optional date range; a master account rolls up its children) and balance for several accounts. |
-| ريما | Chat. Tap the mic and speak; Rima answers in text **and out loud**. |
+| ريما | Chat. Tap the mic and speak, or attach a document photo — Rima answers in text **and out loud**. Can also record a journal entry or create a new account, see below. |
 | ⚙ (top bar) | Server URL (+ connection test), auto-speak on/off, speech language, "try Rima's voice". |
 
 The UI is Arabic / RTL. Conversation memory is kept per install (`conversation_id`) until you press "محادثة جديدة".
+
+## Recording a transaction / adding an account through Rima
+
+Ask Rima to record an entry ("سجل قيد إيجار 100 من الصندوق") or add an account she doesn't have. The
+**server** owns the rules — the app is just the UI for them (see the root [README.md](../README.md#recording-a-transaction-or-a-new-account-through-rima)
+for how the server enforces it):
+
+- Missing fields (debit account, then credit account, then amount — or name, parent, closing type, then a
+  suggested code for a new account) are asked **one at a time**, with numbered suggestions.
+- Before anything saves, Rima reads it back and needs an actual **confirm**.
+- If you go quiet for about a minute with something unsaved, a card appears (and Rima says it) offering
+  **Confirm / Modify / Abort** — it also reappears when you reopen the chat, and "محادثة جديدة" warns you
+  first if something is still unsaved.
+- Tap 📎 in the chat to attach a bill/receipt photo from the gallery. Rima reads it (vendor, date, total,
+  line items) and uses it as her first source for account/amount suggestions — the amount is always a
+  *proposal* you confirm, never applied silently. The image is saved with the entry once you confirm.
 
 ## Voice
 
@@ -60,7 +75,7 @@ There is no login, so treat the link as a secret and stop the tunnel when you're
 
 ```bash
 flutter analyze
-flutter test        # 79 tests: API client, account tree, speech text, chat/voice flow, widget smoke tests
+flutter test        # 140 tests: API client, account tree, speech text, chat/voice flow, drafts/attachments, widget smoke tests
 ```
 
 Voice is tested through a fake `VoiceService`; the real microphone / TTS engine can only be checked on a device.
@@ -76,12 +91,20 @@ flutter build apk --release      # build/app/outputs/flutter-apk/app-release.apk
 ## Toolchain notes (Flutter 3.24)
 
 Newer plugin releases need a newer Flutter/Kotlin than 3.24 ships, so a few versions are pinned on purpose:
-`speech_to_text 7.0.0`, `flutter_tts 4.0.2`, `shared_preferences_android 2.3.4` (a `dependency_overrides` entry),
-and the Kotlin Gradle plugin is 1.9.24 (`android/settings.gradle`). When you upgrade Flutter, these can be
-un-pinned. Verified: `flutter build apk --debug` succeeds; the merged manifest has `RECORD_AUDIO` and the
-speech/TTS `<queries>`.
+`speech_to_text 7.0.0`, `flutter_tts 4.0.2`, `shared_preferences_android 2.3.4` and
+`flutter_plugin_android_lifecycle 2.0.14` (all `dependency_overrides` entries — the lifecycle one is pulled in
+transitively by `image_picker`, and newer releases need `compileSdk 35`, whose resource table this old AGP's
+`aapt2` can't parse: `Android resource linking failed ... LoadedArsc.cpp ... entry offsets overlap`), and the
+Kotlin Gradle plugin is 1.9.24 (`android/settings.gradle`). When you upgrade Flutter, these can be un-pinned.
+Verified: `flutter build apk --release` succeeds; the merged manifest has `RECORD_AUDIO` and the speech/TTS
+`<queries>`.
 
 ## Layout
 
-`lib/core` (API client, settings, formatting) · `lib/models` · `lib/voice` (STT/TTS behind `VoiceService`) ·
-`lib/chat` (`ChatController`) · `lib/screens` · `lib/widgets`.
+`lib/core` (API client, settings, formatting) · `lib/models` (incl. `PendingDraft`, `RimaAttachment`) ·
+`lib/voice` (STT/TTS behind `VoiceService`) ·
+`lib/chat` (`ChatController`, `AttachmentPicker` behind an interface so tests don't need a real gallery) ·
+`lib/screens` (incl. `document_viewer.dart`) · `lib/widgets`.
+
+Picking a gallery image needs `NSPhotoLibraryUsageDescription` on iOS (already in `Info.plist`); Android
+needs no extra permission for the system photo picker `image_picker` uses.

@@ -5,6 +5,7 @@ import '../core/api_client.dart';
 import '../core/format.dart';
 import '../models/models.dart';
 import '../widgets/common.dart';
+import 'document_viewer.dart';
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({super.key});
@@ -106,10 +107,24 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text('${fmtDate(t.date)}  ·  مدين ${fmtNum(t.totalDebit)}  ·  دائن ${fmtNum(t.totalCredit)}'),
-                    trailing: IconButton(
-                      tooltip: 'حذف',
-                      icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
-                      onPressed: () => _delete(t),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (t.hasDocument)
+                          IconButton(
+                            key: Key('document-${t.id}'),
+                            tooltip: 'عرض المستند المرفق',
+                            icon: const Icon(Icons.attach_file),
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => DocumentViewerPage(transactionId: t.id)),
+                            ),
+                          ),
+                        IconButton(
+                          tooltip: 'حذف',
+                          icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                          onPressed: () => _delete(t),
+                        ),
+                      ],
                     ),
                   ),
                 );
@@ -168,6 +183,7 @@ class _TransactionFormPageState extends State<TransactionFormPage> {
   List<ChartAccount> _bookAccounts = [];
   bool _loading = true;
   bool _saving = false;
+  bool _hasDocument = false;
   String? _loadError;
   String? _saveError;
 
@@ -193,6 +209,7 @@ class _TransactionFormPageState extends State<TransactionFormPage> {
         _bookAccounts = chart.where((a) => a.isBook).toList();
         if (existing != null) {
           _date = existing.date ?? DateTime.now();
+          _hasDocument = existing.hasDocument;
           _notes.text = existing.notes ?? '';
           _lines
             ..clear()
@@ -269,7 +286,19 @@ class _TransactionFormPageState extends State<TransactionFormPage> {
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.editingId == null ? 'قيد جديد' : 'تعديل القيد ${widget.editingId}')),
+      appBar: AppBar(
+        title: Text(widget.editingId == null ? 'قيد جديد' : 'تعديل القيد ${widget.editingId}'),
+        actions: [
+          if (_hasDocument && widget.editingId != null)
+            IconButton(
+              tooltip: 'عرض المستند المرفق',
+              icon: const Icon(Icons.attach_file),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => DocumentViewerPage(transactionId: widget.editingId!)),
+              ),
+            ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null

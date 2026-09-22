@@ -17,3 +17,36 @@ engine = create_engine(
 sessionLocal = sessionmaker(autocommit = False, autoflush = False, bind = engine)
 
 Base = declarative_base()
+
+
+# Columns added after the first release. Base.metadata.create_all() creates
+# missing TABLES but never adds columns to an existing one, so databases that
+# predate a column get an idempotent ALTER TABLE at startup.
+_ADDED_COLUMNS = {
+    "TransactionsMaster": {
+        "document": "BLOB",
+        "document_mime": "VARCHAR",
+        "document_name": "VARCHAR",
+    },
+}
+
+
+def ensure_columns(bind=None) -> list[str]:
+    """Adds any missing columns listed in _ADDED_COLUMNS. Safe to run on every
+    startup. Returns the "table.column" names it added."""
+    from sqlalchemy import inspect, text
+
+    bind = bind or engine
+    added = []
+    inspector = inspect(bind)
+    with bind.begin() as conn:
+        for table, columns in _ADDED_COLUMNS.items():
+            if not inspector.has_table(table):
+                continue  # create_all() will build it with every column
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {sql_type}'))
+                    added.append(f"{table}.{name}")
+    return added
+

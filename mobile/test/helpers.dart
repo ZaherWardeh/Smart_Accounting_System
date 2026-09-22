@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:rima_mobile/chat/attachment_picker.dart';
 import 'package:rima_mobile/core/api_client.dart';
+import 'package:rima_mobile/models/models.dart';
 import 'package:rima_mobile/core/settings.dart';
 import 'package:rima_mobile/voice/voice_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -107,3 +110,23 @@ class FakeVoiceService implements VoiceService {
   @override
   void dispose() {}
 }
+
+/// A valid 1x1 PNG, so widgets that decode an image (Image.memory) work in tests.
+final Uint8List tinyPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
+
+/// Stands in for the phone's gallery.
+class FakeAttachmentPicker implements AttachmentPicker {
+  RimaAttachment? next;
+  bool throws = false;
+  int calls = 0;
+
+  @override
+  Future<RimaAttachment?> pickFromGallery() async {
+    calls++;
+    if (throws) throw Exception('permission denied');
+    return next;
+  }
+}
+

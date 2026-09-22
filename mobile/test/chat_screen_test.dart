@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:rima_mobile/chat/attachment_picker.dart';
 import 'package:rima_mobile/core/api_client.dart';
 import 'package:rima_mobile/core/settings.dart';
 import 'package:rima_mobile/screens/chat_screen.dart';
@@ -11,12 +12,13 @@ import 'package:rima_mobile/voice/voice_service.dart';
 
 import 'helpers.dart';
 
-Widget wrap({required AppSettings settings, required ApiClient api, required VoiceService voice}) {
+Widget wrap({required AppSettings settings, required ApiClient api, required VoiceService voice, AttachmentPicker? picker}) {
   return MultiProvider(
     providers: [
       ChangeNotifierProvider<AppSettings>.value(value: settings),
       Provider<ApiClient>.value(value: api),
       Provider<VoiceService>.value(value: voice),
+      Provider<AttachmentPicker>.value(value: picker ?? FakeAttachmentPicker()),
     ],
     child: const MaterialApp(
       locale: Locale('ar'),
