@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/api_client.dart';
 import '../core/settings.dart';
+import '../core/system_settings.dart';
 import '../voice/voice_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -68,11 +71,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final ok = await voice.isLanguageAvailable('ar-SA');
     if (!ok) {
-      messenger.showSnackBar(const SnackBar(
-        content: Text('صوت عربي غير مثبّت على الجهاز. ثبّته من إعدادات النظام ← تحويل النص إلى كلام'),
+      messenger.showSnackBar(SnackBar(
+        content: const Text('صوت عربي غير مثبّت على الجهاز. ثبّته من إعدادات النظام ← تحويل النص إلى كلام'),
+        action: defaultTargetPlatform == TargetPlatform.android ? SnackBarAction(label: 'فتح الإعدادات', onPressed: _openTtsSettings) : null,
       ));
     }
     await voice.speak('مرحباً، أنا ريما، محاسبتك الذكية. كيف فيني ساعدك؟');
+  }
+
+  // No speech model ships inside the app - the phone's own system provides voice
+  // recognition and speech engines, and only IT knows where their language packs
+  // are downloaded. These jump straight to those screens instead of leaving the
+  // user to hunt for them (Android only; iOS has no equivalent deep link).
+  Future<void> _openVoiceInputSettings() async {
+    final opened = await context.read<SystemSettingsOpener>().openVoiceInputSettings();
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح الإعدادات تلقائياً. من إعدادات الجهاز ← اللغات والإدخال ← الإدخال الصوتي')),
+      );
+    }
+  }
+
+  Future<void> _openTtsSettings() async {
+    final opened = await context.read<SystemSettingsOpener>().openTtsInstallSettings();
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح الإعدادات تلقائياً. من إعدادات الجهاز ← تحويل النص إلى كلام')),
+      );
+    }
   }
 
   @override
@@ -148,6 +174,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: const Icon(Icons.record_voice_over),
             label: const Text('جرّب صوت ريما'),
           ),
+          if (defaultTargetPlatform == TargetPlatform.android) ...[
+            const SizedBox(height: 6),
+            Text(
+              'إذا ما اشتغل التعرف على صوتك بلغة معينة، هذا الزر بيوديك لمكان تنزيلها على جهازك.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 6),
+            OutlinedButton.icon(
+              onPressed: _openVoiceInputSettings,
+              icon: const Icon(Icons.settings_voice_outlined),
+              label: const Text('إعدادات الإدخال الصوتي بالجهاز'),
+            ),
+          ],
         ],
       ),
     );

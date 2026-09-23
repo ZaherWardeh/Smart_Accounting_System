@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'chat/attachment_picker.dart';
 import 'core/api_client.dart';
 import 'core/settings.dart';
+import 'core/system_settings.dart';
 import 'screens/accounts_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/home_screen.dart';
@@ -19,12 +20,14 @@ class RimaApp extends StatelessWidget {
     required this.api,
     required this.voice,
     this.picker = const GalleryAttachmentPicker(),
+    this.settingsOpener = const PlatformSystemSettingsOpener(),
   });
 
   final AppSettings settings;
   final ApiClient api;
   final VoiceService voice;
   final AttachmentPicker picker;
+  final SystemSettingsOpener settingsOpener;
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +37,7 @@ class RimaApp extends StatelessWidget {
         Provider<ApiClient>.value(value: api),
         Provider<VoiceService>.value(value: voice),
         Provider<AttachmentPicker>.value(value: picker),
+        Provider<SystemSettingsOpener>.value(value: settingsOpener),
       ],
       child: MaterialApp(
         title: 'Rima',

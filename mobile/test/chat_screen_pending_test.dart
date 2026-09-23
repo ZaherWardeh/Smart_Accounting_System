@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:rima_mobile/chat/attachment_picker.dart';
 import 'package:rima_mobile/core/api_client.dart';
 import 'package:rima_mobile/core/settings.dart';
+import 'package:rima_mobile/core/system_settings.dart';
 import 'package:rima_mobile/models/models.dart';
 import 'package:rima_mobile/screens/chat_screen.dart';
 import 'package:rima_mobile/screens/transactions_screen.dart';
@@ -19,6 +20,7 @@ Widget wrap({
   required ApiClient api,
   required VoiceService voice,
   required AttachmentPicker picker,
+  SystemSettingsOpener? settingsOpener,
   Widget home = const ChatScreen(),
 }) {
   return MultiProvider(
@@ -27,6 +29,7 @@ Widget wrap({
       Provider<ApiClient>.value(value: api),
       Provider<VoiceService>.value(value: voice),
       Provider<AttachmentPicker>.value(value: picker),
+      Provider<SystemSettingsOpener>.value(value: settingsOpener ?? FakeSystemSettingsOpener()),
     ],
     child: MaterialApp(
       locale: const Locale('ar'),

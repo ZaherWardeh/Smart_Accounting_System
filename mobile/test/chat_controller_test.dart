@@ -9,11 +9,12 @@ import 'package:rima_mobile/core/settings.dart';
 import 'helpers.dart';
 
 class Harness {
-  Harness(this.chat, this.voice, this.settings, this.asked);
+  Harness(this.chat, this.voice, this.settings, this.asked, this.settingsOpener);
 
   final ChatController chat;
   final FakeVoiceService voice;
   final AppSettings settings;
+  final FakeSystemSettingsOpener settingsOpener;
 
   /// (conversation_id, question) for every /reports/ask_ai request.
   final List<(String, String)> asked;
@@ -26,6 +27,7 @@ Future<Harness> harness({
 }) async {
   final settings = await makeSettings(prefs);
   final voice = FakeVoiceService();
+  final settingsOpener = FakeSystemSettingsOpener();
   final asked = <(String, String)>[];
   final api = fakeApi(handler ??
       (req) async {
@@ -35,10 +37,15 @@ Future<Harness> harness({
       });
   return Harness(
       ChatController(
-          api: api, voice: voice, settings: settings, finalResultGrace: const Duration(milliseconds: 100)),
+          api: api,
+          voice: voice,
+          settings: settings,
+          settingsOpener: settingsOpener,
+          finalResultGrace: const Duration(milliseconds: 100)),
       voice,
       settings,
-      asked);
+      asked,
+      settingsOpener);
 }
 
 /// Lets fire-and-forget futures (auto-speak, the send after a voice result) run.
@@ -283,7 +290,68 @@ void main() {
 
       expect(h.chat.listening, isFalse);
       expect(h.chat.notice, contains('ما سمعت'));
+      expect(h.chat.voiceSetupNeeded, isFalse);
       expect(h.asked, isEmpty);
+    });
+
+    test('a missing language pack sets voiceSetupNeeded (Arabic and English messages)', () async {
+      for (final message in [
+        'التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز',
+        'Speech recognition for this language is not installed on this device',
+      ]) {
+        final h = await harness();
+        await h.chat.toggleListening();
+        h.voice.fail(message);
+        expect(h.chat.voiceSetupNeeded, isTrue, reason: message);
+        expect(h.chat.notice, message);
+      }
+    });
+
+    test('openVoiceSettings opens the phone\'s settings and leaves the notice as is on success', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.fail('التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز');
+      expect(h.chat.voiceSetupNeeded, isTrue);
+
+      await h.chat.openVoiceSettings();
+
+      expect(h.settingsOpener.voiceInputCalls, 1);
+      expect(h.chat.voiceSetupNeeded, isTrue); // still true: the notice/button stay until dismissed or a new attempt
+    });
+
+    test('openVoiceSettings falls back to a manual-instructions notice when nothing could be opened', () async {
+      final h = await harness();
+      h.settingsOpener.voiceInputOpens = false;
+      await h.chat.toggleListening();
+      h.voice.fail('التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز');
+
+      await h.chat.openVoiceSettings();
+
+      expect(h.chat.voiceSetupNeeded, isFalse);
+      expect(h.chat.notice, contains('تعذر فتح إعدادات الصوت'));
+    });
+
+    test('a later, unrelated notice clears voiceSetupNeeded', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.fail('التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز');
+      expect(h.chat.voiceSetupNeeded, isTrue);
+
+      await h.chat.toggleListening();
+      h.voice.fail('error_no_match');
+
+      expect(h.chat.voiceSetupNeeded, isFalse);
+    });
+
+    test('dismissing the notice also clears voiceSetupNeeded', () async {
+      final h = await harness();
+      await h.chat.toggleListening();
+      h.voice.fail('التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز');
+
+      h.chat.dismissNotice();
+
+      expect(h.chat.voiceSetupNeeded, isFalse);
+      expect(h.chat.notice, isNull);
     });
 
     test('unavailable speech recognition reports it and never starts listening', () async {

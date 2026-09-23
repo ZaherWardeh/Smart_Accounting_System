@@ -9,6 +9,7 @@ import 'package:rima_mobile/chat/attachment_picker.dart';
 import 'package:rima_mobile/core/api_client.dart';
 import 'package:rima_mobile/models/models.dart';
 import 'package:rima_mobile/core/settings.dart';
+import 'package:rima_mobile/core/system_settings.dart';
 import 'package:rima_mobile/voice/voice_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -104,8 +105,12 @@ class FakeVoiceService implements VoiceService {
     stopSpeakingCalls++;
   }
 
+  /// Governs [isLanguageAvailable] for 'ar-SA' specifically (settings screen's
+  /// "try Rima's voice" check); other locales always report available.
+  bool arabicAvailable = true;
+
   @override
-  Future<bool> isLanguageAvailable(String bcp47) async => true;
+  Future<bool> isLanguageAvailable(String bcp47) async => bcp47 == 'ar-SA' ? arabicAvailable : true;
 
   @override
   void dispose() {}
@@ -127,6 +132,26 @@ class FakeAttachmentPicker implements AttachmentPicker {
     calls++;
     if (throws) throw Exception('permission denied');
     return next;
+  }
+}
+
+/// Stands in for the phone's own settings screens.
+class FakeSystemSettingsOpener implements SystemSettingsOpener {
+  bool voiceInputOpens = true;
+  bool ttsInstallOpens = true;
+  int voiceInputCalls = 0;
+  int ttsInstallCalls = 0;
+
+  @override
+  Future<bool> openVoiceInputSettings() async {
+    voiceInputCalls++;
+    return voiceInputOpens;
+  }
+
+  @override
+  Future<bool> openTtsInstallSettings() async {
+    ttsInstallCalls++;
+    return ttsInstallOpens;
   }
 }
 

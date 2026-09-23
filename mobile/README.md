@@ -40,8 +40,15 @@ for how the server enforces it):
   falls back to English). Partial results appear live in the text box; a pause ends the utterance and sends it.
 - **Output:** `flutter_tts`. Arabic replies use an Arabic voice, everything else English. Markdown is stripped
   before speaking; long replies are read in chunks. Tapping the mic while Rima talks interrupts her.
-- Arabic recognition/voice needs the language pack on the phone (Android: Google app → Voice, and *Settings →
-  System → Languages → Text-to-speech*). If it's missing the app tells you instead of failing silently.
+- **Arabic (or any language) needs its pack installed on the phone first** - speech recognition and
+  text-to-speech are both system services on Android, not something an app can bundle or ship inside its own
+  APK. If the phone doesn't have it, the app tells you rather than failing silently, and offers a button
+  ("فتح إعدادات الصوت" in the chat's notice, or "إعدادات الإدخال الصوتي بالجهاز" / the "جرّب صوت ريما" snackbar
+  in ⚙) that jumps straight to the phone's own settings screen for it - `Settings.ACTION_VOICE_INPUT_SETTINGS`
+  for recognition, `TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA` for the voice - implemented as a tiny native
+  `MethodChannel` in `MainActivity.kt` (no extra plugin dependency). Android only; iOS has no equivalent deep
+  link, so the button doesn't show there - Siri dictation languages come from the keyboard languages installed
+  under Settings → General → Keyboard.
 
 ## Run it
 
@@ -75,7 +82,7 @@ There is no login, so treat the link as a secret and stop the tunnel when you're
 
 ```bash
 flutter analyze
-flutter test        # 140 tests: API client, account tree, speech text, chat/voice flow, drafts/attachments, widget smoke tests
+flutter test        # 158 tests: API client, account tree, speech text, chat/voice flow, drafts/attachments, system settings deep links, widget smoke tests
 ```
 
 Voice is tested through a fake `VoiceService`; the real microphone / TTS engine can only be checked on a device.
@@ -101,10 +108,11 @@ Verified: `flutter build apk --release` succeeds; the merged manifest has `RECOR
 
 ## Layout
 
-`lib/core` (API client, settings, formatting) · `lib/models` (incl. `PendingDraft`, `RimaAttachment`) ·
-`lib/voice` (STT/TTS behind `VoiceService`) ·
+`lib/core` (API client, settings, formatting, `system_settings.dart`'s `SystemSettingsOpener`) · `lib/models`
+(incl. `PendingDraft`, `RimaAttachment`) · `lib/voice` (STT/TTS behind `VoiceService`) ·
 `lib/chat` (`ChatController`, `AttachmentPicker` behind an interface so tests don't need a real gallery) ·
-`lib/screens` (incl. `document_viewer.dart`) · `lib/widgets`.
+`lib/screens` (incl. `document_viewer.dart`) · `lib/widgets` ·
+`android/app/.../MainActivity.kt` (the native side of `SystemSettingsOpener`).
 
 Picking a gallery image needs `NSPhotoLibraryUsageDescription` on iOS (already in `Info.plist`); Android
 needs no extra permission for the system photo picker `image_picker` uses.

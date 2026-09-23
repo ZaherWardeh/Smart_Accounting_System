@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,6 +6,7 @@ import '../chat/attachment_picker.dart';
 import '../chat/chat_controller.dart';
 import '../core/api_client.dart';
 import '../core/settings.dart';
+import '../core/system_settings.dart';
 import '../voice/voice_service.dart';
 import '../widgets/common.dart';
 
@@ -30,6 +32,7 @@ class _ChatScreenState extends State<ChatScreen> {
       voice: context.read<VoiceService>(),
       settings: context.read<AppSettings>(),
       picker: context.read<AttachmentPicker>(),
+      settingsOpener: context.read<SystemSettingsOpener>(),
     )..addListener(_onChat);
     // an operation left unsaved earlier (even before an app restart) is shown again
     _chat.refreshPending();
@@ -229,7 +232,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _noticeBar(BuildContext context, ChatController chat) => MaterialBanner(
         content: Text(chat.notice!),
-        actions: [TextButton(onPressed: chat.dismissNotice, child: const Text('حسناً'))],
+        actions: [
+          // No language model ships inside the app - Android's speech recognition is a
+          // system service, so the fix is the phone's own settings, only reachable there.
+          if (chat.voiceSetupNeeded && defaultTargetPlatform == TargetPlatform.android)
+            TextButton(onPressed: chat.openVoiceSettings, child: const Text('فتح إعدادات الصوت')),
+          TextButton(onPressed: chat.dismissNotice, child: const Text('حسناً')),
+        ],
       );
 
   Widget _speakingBar(BuildContext context, ChatController chat) => Material(

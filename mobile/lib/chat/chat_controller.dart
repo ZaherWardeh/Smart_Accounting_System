@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
 import '../core/settings.dart';
+import '../core/system_settings.dart';
 import '../models/models.dart';
 import '../voice/voice_service.dart';
 import 'attachment_picker.dart';
@@ -25,14 +26,17 @@ class ChatController extends ChangeNotifier {
     required this.voice,
     required this.settings,
     AttachmentPicker? picker,
+    SystemSettingsOpener? settingsOpener,
     this.finalResultGrace = const Duration(seconds: 3),
     this.pendingIdleAlert = const Duration(seconds: 60),
-  }) : picker = picker ?? const GalleryAttachmentPicker();
+  })  : picker = picker ?? const GalleryAttachmentPicker(),
+        settingsOpener = settingsOpener ?? const PlatformSystemSettingsOpener();
 
   final ApiClient api;
   final VoiceService voice;
   final AppSettings settings;
   final AttachmentPicker picker;
+  final SystemSettingsOpener settingsOpener;
 
   /// How long to wait for the recogniser's final transcript after it reports
   /// that it stopped listening (see [toggleListening]).
@@ -52,6 +56,14 @@ class ChatController extends ChangeNotifier {
 
   /// A short, dismissable hint for the user (mic unavailable, nothing heard...).
   String? notice;
+
+  /// True when [notice] is specifically "this language isn't installed on the
+  /// device" - the notice bar then offers a shortcut to the phone's own voice
+  /// settings (see [openVoiceSettings]). There is no bundling the recognizer's
+  /// language model inside the app: Android's speech recognition is a system
+  /// service, so the best this app can do is jump straight to where the phone
+  /// downloads it.
+  bool voiceSetupNeeded = false;
 
   /// The document image picked but not sent yet.
   RimaAttachment? attachment;
@@ -89,6 +101,7 @@ class ChatController extends ChangeNotifier {
     attachment = null;
     sending = true;
     notice = null;
+    voiceSetupNeeded = false;
     notifyListeners();
 
     try {
@@ -115,6 +128,7 @@ class ChatController extends ChangeNotifier {
       if (picked == null) return;
       attachment = picked;
       notice = null;
+      voiceSetupNeeded = false;
       userActivity();
       notifyListeners();
     } catch (_) {
@@ -176,6 +190,7 @@ class ChatController extends ChangeNotifier {
     pendingAlert = false;
     sending = true;
     notice = null;
+    voiceSetupNeeded = false;
     notifyListeners();
     try {
       final done = await api.confirmDraft(settings.conversationId, kind);
@@ -188,6 +203,7 @@ class ChatController extends ChangeNotifier {
     } on ApiException catch (e) {
       sending = false;
       notice = e.message;
+      voiceSetupNeeded = false;
       notifyListeners();
       await refreshPending();
     }
@@ -199,6 +215,7 @@ class ChatController extends ChangeNotifier {
     pendingAlert = false;
     sending = true;
     notice = null;
+    voiceSetupNeeded = false;
     notifyListeners();
     try {
       pending = await api.cancelDraft(settings.conversationId, kind);
@@ -209,6 +226,7 @@ class ChatController extends ChangeNotifier {
     } on ApiException catch (e) {
       sending = false;
       notice = e.message;
+      voiceSetupNeeded = false;
       notifyListeners();
     }
   }
@@ -226,6 +244,7 @@ class ChatController extends ChangeNotifier {
       await voice.speak(text);
     } catch (_) {
       notice = 'تعذر تشغيل الصوت على هذا الجهاز';
+      voiceSetupNeeded = false;
     } finally {
       speaking = false;
       notifyListeners();
@@ -258,6 +277,7 @@ class ChatController extends ChangeNotifier {
     final ready = await voice.initSpeech();
     if (!ready) {
       notice = 'التعرف على الصوت غير متاح. تأكد من السماح للتطبيق باستخدام الميكروفون';
+      voiceSetupNeeded = false;
       notifyListeners();
       return;
     }
@@ -265,6 +285,7 @@ class ChatController extends ChangeNotifier {
     partial = '';
     listening = true;
     notice = null;
+    voiceSetupNeeded = false;
     if (pendingAlert) pendingAlert = false;
     notifyListeners();
 
@@ -285,6 +306,7 @@ class ChatController extends ChangeNotifier {
         listening = false;
         partial = '';
         notice = _friendlyError(message);
+        voiceSetupNeeded = _isMissingLanguagePack(message);
         notifyListeners();
       },
       // "Stopped listening" does NOT mean "finished transcribing": on Android the
@@ -307,6 +329,19 @@ class ChatController extends ChangeNotifier {
     return message; // already user-facing for our own messages, raw for engine errors
   }
 
+  bool _isMissingLanguagePack(String message) => message.contains('غير مثبّت') || message.contains('not installed');
+
+  /// Jumps to the phone's own "Voice input" settings, where the missing
+  /// language pack is downloaded (see [voiceSetupNeeded]).
+  Future<void> openVoiceSettings() async {
+    final opened = await settingsOpener.openVoiceInputSettings();
+    if (!opened) {
+      notice = 'تعذر فتح إعدادات الصوت تلقائياً. جرّب من إعدادات الجهاز ← اللغات والإدخال ← الإدخال الصوتي';
+      voiceSetupNeeded = false;
+      notifyListeners();
+    }
+  }
+
   void _finishListening(String text) {
     if (!listening) return; // the final result and the "done" status both land here
     _finalWait?.cancel();
@@ -315,6 +350,7 @@ class ChatController extends ChangeNotifier {
     final heard = text.trim();
     if (heard.isEmpty) {
       notice = 'ما سمعت شي، جرّب مرة ثانية';
+      voiceSetupNeeded = false;
       notifyListeners();
       return;
     }
@@ -324,6 +360,7 @@ class ChatController extends ChangeNotifier {
 
   void dismissNotice() {
     notice = null;
+    voiceSetupNeeded = false;
     notifyListeners();
   }
 
@@ -355,6 +392,7 @@ class ChatController extends ChangeNotifier {
     attachment = null;
     messages.clear();
     notice = null;
+    voiceSetupNeeded = false;
     await settings.newConversation();
     notifyListeners();
   }

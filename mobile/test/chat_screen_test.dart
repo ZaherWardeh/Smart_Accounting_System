@@ -7,18 +7,26 @@ import 'package:provider/provider.dart';
 import 'package:rima_mobile/chat/attachment_picker.dart';
 import 'package:rima_mobile/core/api_client.dart';
 import 'package:rima_mobile/core/settings.dart';
+import 'package:rima_mobile/core/system_settings.dart';
 import 'package:rima_mobile/screens/chat_screen.dart';
 import 'package:rima_mobile/voice/voice_service.dart';
 
 import 'helpers.dart';
 
-Widget wrap({required AppSettings settings, required ApiClient api, required VoiceService voice, AttachmentPicker? picker}) {
+Widget wrap({
+  required AppSettings settings,
+  required ApiClient api,
+  required VoiceService voice,
+  AttachmentPicker? picker,
+  SystemSettingsOpener? settingsOpener,
+}) {
   return MultiProvider(
     providers: [
       ChangeNotifierProvider<AppSettings>.value(value: settings),
       Provider<ApiClient>.value(value: api),
       Provider<VoiceService>.value(value: voice),
       Provider<AttachmentPicker>.value(value: picker ?? FakeAttachmentPicker()),
+      Provider<SystemSettingsOpener>.value(value: settingsOpener ?? FakeSystemSettingsOpener()),
     ],
     child: const MaterialApp(
       locale: Locale('ar'),
@@ -111,6 +119,72 @@ void main() {
     await tester.tap(find.text('حسناً'));
     await tester.pump();
     expect(find.textContaining('غير متاح'), findsNothing);
+  });
+
+  testWidgets('a missing Arabic language pack offers a shortcut to the phone\'s voice settings', (tester) async {
+    final settings = await makeSettings();
+    final voice = FakeVoiceService();
+    final settingsOpener = FakeSystemSettingsOpener();
+    await tester.pumpWidget(wrap(
+      settings: settings,
+      api: fakeApi((_) async => jsonResponse({'answer': ''})),
+      voice: voice,
+      settingsOpener: settingsOpener,
+    ));
+
+    await tester.tap(find.byIcon(Icons.mic));
+    await tester.pump();
+    voice.fail('التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز');
+    await tester.pump();
+
+    expect(find.textContaining('غير مثبّت'), findsOneWidget);
+    expect(find.text('فتح إعدادات الصوت'), findsOneWidget);
+
+    await tester.tap(find.text('فتح إعدادات الصوت'));
+    await tester.pump();
+
+    expect(settingsOpener.voiceInputCalls, 1);
+    expect(find.textContaining('غير مثبّت'), findsOneWidget); // still shown - the user hasn't come back yet
+  });
+
+  testWidgets('when the phone has no such settings screen, the shortcut turns into plain instructions', (tester) async {
+    final settings = await makeSettings();
+    final voice = FakeVoiceService();
+    final settingsOpener = FakeSystemSettingsOpener()..voiceInputOpens = false;
+    await tester.pumpWidget(wrap(
+      settings: settings,
+      api: fakeApi((_) async => jsonResponse({'answer': ''})),
+      voice: voice,
+      settingsOpener: settingsOpener,
+    ));
+
+    await tester.tap(find.byIcon(Icons.mic));
+    await tester.pump();
+    voice.fail('التعرف على الصوت بالعربية غير مثبّت على هذا الجهاز');
+    await tester.pump();
+    await tester.tap(find.text('فتح إعدادات الصوت'));
+    await tester.pump();
+
+    expect(find.textContaining('تعذر فتح إعدادات الصوت'), findsOneWidget);
+    expect(find.text('فتح إعدادات الصوت'), findsNothing);
+  });
+
+  testWidgets('a plain no-match error does not offer the settings shortcut', (tester) async {
+    final settings = await makeSettings();
+    final voice = FakeVoiceService();
+    await tester.pumpWidget(wrap(
+      settings: settings,
+      api: fakeApi((_) async => jsonResponse({'answer': ''})),
+      voice: voice,
+    ));
+
+    await tester.tap(find.byIcon(Icons.mic));
+    await tester.pump();
+    voice.fail('error_no_match');
+    await tester.pump();
+
+    expect(find.textContaining('ما سمعت'), findsOneWidget);
+    expect(find.text('فتح إعدادات الصوت'), findsNothing);
   });
 
   testWidgets('the mute button stops Rima mid-sentence and turns auto-speak off', (tester) async {
