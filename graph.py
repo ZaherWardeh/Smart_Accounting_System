@@ -55,6 +55,11 @@ def is_llm_connected() -> bool:
 
 MAX_TOOL_ROUNDS = 8
 
+# Gemini occasionally answers with a candidate that has no content at all (for
+# example a malformed tool call). Such a reply is retried this many times before
+# the turn is given up as "no clear answer" instead of failing the request.
+MAX_EMPTY_REPLIES = 2
+
 # Bounds on the in-memory conversation store: the oldest conversation is
 # evicted once more than MAX_TRACKED_CONVERSATIONS are held, and any single
 # conversation keeps only its most recent MAX_HISTORY_ENTRIES turns.
@@ -255,10 +260,19 @@ def _run_tool_calling_rounds(
     model's final plain-text turn. If MAX_TOOL_ROUNDS is exhausted without a
     final answer, final_text is None — the caller decides what to persist."""
     final_text = None
+    empty_replies = 0
     for _ in range(MAX_TOOL_ROUNDS):
         response = _generate_with_tools(contents, config)
-        candidate = response.candidates[0]
-        function_calls = [p.function_call for p in candidate.content.parts if p.function_call]
+        candidate = response.candidates[0] if response.candidates else None
+        parts = candidate.content.parts if candidate is not None and candidate.content is not None else None
+        if not parts:
+            # nothing usable came back: don't record it in the history, try again,
+            # and if it keeps happening let the caller fall back to its stock answer
+            empty_replies += 1
+            if empty_replies > MAX_EMPTY_REPLIES:
+                break
+            continue
+        function_calls = [p.function_call for p in parts if p.function_call]
 
         contents.append(candidate.content)
 
