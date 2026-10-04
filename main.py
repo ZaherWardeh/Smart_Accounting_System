@@ -1,9 +1,7 @@
-import os
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, status, HTTPException, Body, Query
-from fastapi.responses import FileResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from database import sessionLocal, engine, Base, ensure_columns
 from models import Accounts, TransactionsMaster, TransactionsDetail
@@ -26,13 +24,6 @@ with sessionLocal() as _startup_db:
     except Exception as _e:  # housekeeping must never stop the server from starting
         print(f"Attachment cleanup skipped: {_e}")
 
-# The built-in website is optional: SERVE_WEB=0 runs the REST API only (e.g. when the
-# only client is the mobile app and the backend is exposed through a tunnel).
-SERVE_WEB = os.getenv("SERVE_WEB", "1") != "0"
-
-if SERVE_WEB:
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
 # دالة لجلب جلسة قاعدة البيانات
 def get_db():
     db = sessionLocal()
@@ -44,27 +35,6 @@ def get_db():
 @app.get("/health")
 def health():
     return {"status": "ok", "llm_connected": is_llm_connected()}
-
-if SERVE_WEB:
-    @app.get("/")
-    def home():
-        return FileResponse("static/index.html")
-
-    @app.get("/accounts")
-    def accounts_page():
-        return FileResponse("static/accounts.html")
-
-    @app.get("/transactions")
-    def transactions_page():
-        return FileResponse("static/transactions.html")
-
-    @app.get("/reports")
-    def reports_page():
-        return FileResponse("static/reports.html")
-
-    @app.get("/chat")
-    def chat_page():
-        return FileResponse("static/chat.html")
 
 # حسابات
 @app.get("/accounts/")

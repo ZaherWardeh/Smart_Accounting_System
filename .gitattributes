@@ -5,3 +5,6 @@
 
 # Same concern for nginx's config parser on the Linux server.
 deploy/nginx.conf text eol=lf
+
+# cmd.exe needs CRLF in .bat files (goto/labels misbehave with bare LF).
+*.bat text eol=crlf
