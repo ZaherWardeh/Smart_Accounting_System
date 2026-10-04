@@ -37,17 +37,8 @@ build/
 # Uvicorn reload files
 *.pid
 
-#DB Files
+# Local databases (created on first run) - never committed
 *.db
-
-# Exception: accounting.db is this repo's seed/demo data, committed on
-# purpose. The Docker deployment bakes it into the image and seeds a
-# mounted volume from it on first boot (see entrypoint.sh, DEPLOYMENT.md) -
-# that only works if it's actually in the repo a fresh `git clone` gets.
-!accounting.db
-
-# Runtime output of start_tunnel.bat
-logs/
 
 # Docs and Claude tooling stay local - they are not part of the repository
 *.md
